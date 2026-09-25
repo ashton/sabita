@@ -1,0 +1,266 @@
+use super::KavitaClient;
+use crate::models::series::Series;
+use crate::models::series_filter::{
+    SeriesFilter, SeriesFilterComparison, SeriesFilterEntityType, SeriesFilterField,
+    SeriesFilterStatement, SeriesSortField, SeriesSortOption,
+};
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct SeriesFilterParams {
+    #[serde(rename = "PageNumber", skip_serializing_if = "Option::is_none")]
+    page_number: Option<u32>,
+    #[serde(rename = "PageSize", skip_serializing_if = "Option::is_none")]
+    page_size: Option<u32>,
+}
+
+impl KavitaClient {
+    pub async fn list_series_with_filter(
+        &self,
+        filter: &SeriesFilter,
+        page_number: Option<u32>,
+        page_size: Option<u32>,
+    ) -> Result<Vec<Series>, reqwest::Error> {
+        self.http_client
+            .post(format!("{}/api/Series/v2", self.base_url))
+            .query(&SeriesFilterParams {
+                page_number,
+                page_size,
+            })
+            .json(filter)
+            .send()
+            .await?
+            .json()
+            .await
+    }
+
+    pub async fn list_series_of_library_paginated(
+        &self,
+        library_id: String,
+        page_number: Option<u32>,
+        page_size: Option<u32>,
+    ) -> Result<Vec<Series>, reqwest::Error> {
+        let filter = SeriesFilter {
+            id: None,
+            name: None,
+            limit_to: None,
+            combination: None,
+            entity_type: SeriesFilterEntityType::Series,
+            sort_options: SeriesSortOption {
+                sort_field: SeriesSortField::SortName,
+                is_ascending: true,
+            },
+            statements: vec![SeriesFilterStatement {
+                comparison: SeriesFilterComparison::Equal,
+                field: SeriesFilterField::Libraries,
+                value: Some(library_id),
+            }],
+        };
+
+        self.http_client
+            .post(format!("{}/api/Series/v2", self.base_url))
+            .query(&SeriesFilterParams {
+                page_number,
+                page_size,
+            })
+            .json(&filter)
+            .send()
+            .await?
+            .json()
+            .await
+    }
+
+    pub async fn list_series_of_library(
+        &self,
+        library_id: String,
+    ) -> Result<Vec<Series>, reqwest::Error> {
+        self.list_series_of_library_paginated(library_id, None, None)
+            .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::series_filter::{
+        SeriesFilterCombination, SeriesFilterEntityType, SeriesSortField, SeriesSortOption,
+    };
+    use reqwest::Client;
+    use wiremock::matchers::{body_json, method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn client_for(mock_server: &MockServer) -> KavitaClient {
+        KavitaClient::new(mock_server.uri(), Client::new())
+    }
+
+    fn sample_filter() -> SeriesFilter {
+        SeriesFilter {
+            id: None,
+            name: None,
+            statements: vec![],
+            combination: Some(SeriesFilterCombination::And),
+            sort_options: SeriesSortOption {
+                sort_field: SeriesSortField::SortName,
+                is_ascending: true,
+            },
+            entity_type: SeriesFilterEntityType::Series,
+            limit_to: None,
+        }
+    }
+
+    const SERIES_JSON: &str = r#"{
+        "id": 1,
+        "name": "My Series",
+        "originalName": "My Series",
+        "localizedName": "My Series",
+        "coverImage": "1.png",
+        "sortName": "My Series",
+        "pages": 100,
+        "userRating": 0.0,
+        "hasUserRated": false,
+        "totalReads": 0,
+        "pagesRead": 0,
+        "latestReadDate": "00:00:00",
+        "format": 1,
+        "libraryId": 1,
+        "libraryName": "Comics",
+        "minHoursToRead": 1,
+        "maxHoursToRead": 2,
+        "avgHoursToRead": 1.5,
+        "folderPath": "/data/comics/my-series",
+        "isBlackListed": false
+    }"#;
+
+    #[tokio::test]
+    async fn series_v2_sends_filter_and_parses_response() {
+        let mock_server = MockServer::start().await;
+        let filter = sample_filter();
+        let body = format!("[{}]", SERIES_JSON);
+
+        Mock::given(method("POST"))
+            .and(path("/api/Series/v2"))
+            .and(query_param("PageNumber", "1"))
+            .and(query_param("PageSize", "20"))
+            .and(body_json(&filter))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&mock_server)
+            .await;
+
+        let client = client_for(&mock_server);
+        let series = client
+            .list_series_with_filter(&filter, Some(1), Some(20))
+            .await
+            .unwrap();
+
+        let expected: Series = serde_json::from_str(SERIES_JSON).unwrap();
+        assert_eq!(series, vec![expected]);
+    }
+
+    #[tokio::test]
+    async fn series_v2_omits_pagination_params_when_none() {
+        let mock_server = MockServer::start().await;
+        let filter = sample_filter();
+
+        Mock::given(method("POST"))
+            .and(path("/api/Series/v2"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("[]", "application/json"))
+            .mount(&mock_server)
+            .await;
+
+        let client = client_for(&mock_server);
+        let series = client
+            .list_series_with_filter(&filter, None, None)
+            .await
+            .unwrap();
+
+        assert!(series.is_empty());
+    }
+
+    fn library_filter(library_id: &str) -> SeriesFilter {
+        SeriesFilter {
+            id: None,
+            name: None,
+            limit_to: None,
+            combination: None,
+            entity_type: SeriesFilterEntityType::Series,
+            sort_options: SeriesSortOption {
+                sort_field: SeriesSortField::SortName,
+                is_ascending: true,
+            },
+            statements: vec![SeriesFilterStatement {
+                comparison: SeriesFilterComparison::Equal,
+                field: SeriesFilterField::Libraries,
+                value: Some(library_id.to_string()),
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn list_series_of_library_paginated_sends_library_filter_and_pagination() {
+        let mock_server = MockServer::start().await;
+        let expected_filter = library_filter("3");
+        let body = format!("[{}]", SERIES_JSON);
+
+        Mock::given(method("POST"))
+            .and(path("/api/Series/v2"))
+            .and(query_param("PageNumber", "2"))
+            .and(query_param("PageSize", "10"))
+            .and(body_json(&expected_filter))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&mock_server)
+            .await;
+
+        let client = client_for(&mock_server);
+        let series = client
+            .list_series_of_library_paginated("3".to_string(), Some(2), Some(10))
+            .await
+            .unwrap();
+
+        let expected: Series = serde_json::from_str(SERIES_JSON).unwrap();
+        assert_eq!(series, vec![expected]);
+    }
+
+    #[tokio::test]
+    async fn list_series_of_library_paginated_omits_pagination_params_when_none() {
+        let mock_server = MockServer::start().await;
+        let expected_filter = library_filter("3");
+
+        Mock::given(method("POST"))
+            .and(path("/api/Series/v2"))
+            .and(body_json(&expected_filter))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("[]", "application/json"))
+            .mount(&mock_server)
+            .await;
+
+        let client = client_for(&mock_server);
+        let series = client
+            .list_series_of_library_paginated("3".to_string(), None, None)
+            .await
+            .unwrap();
+
+        assert!(series.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_series_of_library_sends_library_filter_without_pagination() {
+        let mock_server = MockServer::start().await;
+        let expected_filter = library_filter("7");
+        let body = format!("[{}]", SERIES_JSON);
+
+        Mock::given(method("POST"))
+            .and(path("/api/Series/v2"))
+            .and(body_json(&expected_filter))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&mock_server)
+            .await;
+
+        let client = client_for(&mock_server);
+        let series = client
+            .list_series_of_library("7".to_string())
+            .await
+            .unwrap();
+
+        let expected: Series = serde_json::from_str(SERIES_JSON).unwrap();
+        assert_eq!(series, vec![expected]);
+    }
+}
