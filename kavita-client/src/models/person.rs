@@ -21,9 +21,9 @@ pub enum PersonRole {
 
 #[derive(Deserialize, Debug, Default)]
 pub struct Person {
-    id: u16,
-    name: Option<String>,
-    cover_image: Option<String>,
-    description: Option<String>,
-    roles: Vec<PersonRole>,
+    pub id: u16,
+    pub name: Option<String>,
+    pub cover_image: Option<String>,
+    pub description: Option<String>,
+    pub roles: Vec<PersonRole>,
 }

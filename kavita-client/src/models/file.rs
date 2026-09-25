@@ -14,11 +14,11 @@ pub enum KavitaFileType {
 
 #[derive(Deserialize, Debug, Default)]
 pub struct File {
-    id: u16,
-    file_path: Option<String>,
-    pages: u16,
-    format: KavitaFileType,
-    bytes: u32,
-    created: NaiveTime,
-    extension: Option<String>,
+    pub id: u16,
+    pub file_path: Option<String>,
+    pub pages: u16,
+    pub format: KavitaFileType,
+    pub bytes: u32,
+    pub created: NaiveTime,
+    pub extension: Option<String>,
 }

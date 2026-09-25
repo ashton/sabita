@@ -2,6 +2,6 @@ use serde::Deserialize;
 
 #[derive(Deserialize, Debug, Default)]
 pub struct GenreTag {
-    id: u16,
-    name: Option<String>,
+    pub id: u16,
+    pub name: Option<String>,
 }

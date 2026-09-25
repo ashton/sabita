@@ -6,4 +6,5 @@ pub mod person;
 pub mod series;
 pub mod series_filter;
 pub mod tag;
+pub mod user;
 pub mod volume;

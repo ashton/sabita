@@ -5,7 +5,7 @@ mod library;
 mod series;
 mod volume;
 
-struct KavitaClient {
+pub struct KavitaClient {
     http_client: Client,
     base_url: String,
 }
