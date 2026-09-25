@@ -1,5 +1,6 @@
 use reqwest::Client;
 
+mod account;
 mod chapter;
 mod library;
 mod series;
