@@ -1,6 +1,19 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    use diesel::sql_types::{Nullable, Text};
+    use crate::models::integration::IntegrationTypeMapping;
+
+    integrations (id) {
+        id -> Text,
+        name -> Text,
+        integration_type -> IntegrationTypeMapping,
+        url -> Nullable<Text>,
+        api_key -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
     libraries (id) {
         id -> Text,
         name -> Text,
@@ -19,4 +32,4 @@ diesel::table! {
     }
 }
 
-diesel::allow_tables_to_appear_in_same_query!(libraries, servers,);
+diesel::allow_tables_to_appear_in_same_query!(integrations, libraries, servers,);

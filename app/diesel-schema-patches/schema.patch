@@ -1,0 +1,20 @@
+--- a/src/schema.rs	2026-10-07 15:17:47.234054172 -0300
++++ b/src/schema.rs	2026-10-07 15:17:47.234767904 -0300
+@@ -1,13 +1,16 @@
+ // @generated automatically by Diesel CLI.
+ 
+ diesel::table! {
++    use diesel::sql_types::{Nullable, Text};
++    use crate::models::integration::IntegrationTypeMapping;
++
+     integrations (id) {
+         id -> Text,
+         name -> Text,
+-        integration_type -> Text,
++        integration_type -> IntegrationTypeMapping,
+         url -> Nullable<Text>,
+         api_key -> Nullable<Text>,
+     }
+ }
+ 
+ diesel::table! {

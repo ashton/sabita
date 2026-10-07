@@ -9,10 +9,7 @@ pub struct Home;
 #[derive(Clone, Debug)]
 pub enum Message {}
 
-pub enum Action {
-    None,
-    Run(Task<Message>),
-}
+pub enum Action {}
 
 impl Home {
     pub fn new() -> (Self, Task<Message>) {

@@ -1,4 +1,5 @@
 pub mod configuration;
+pub mod integration;
 pub mod library;
 pub mod library_item;
 
