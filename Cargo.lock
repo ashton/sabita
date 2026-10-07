@@ -974,6 +974,7 @@ version = "2.3.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3b934ddbdcb2abb9f9fc9c30bd47bcc5618b615eea1d334cda5fdf8ff9b072a"
 dependencies = [
+ "chrono",
  "diesel_derives",
  "downcast-rs 2.0.2",
  "libsqlite3-sys",
@@ -4165,6 +4166,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 name = "sabita-app"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "diesel",
  "diesel-async",
  "diesel-derive-enum",
@@ -4172,7 +4174,9 @@ dependencies = [
  "iced_font_awesome",
  "iced_test",
  "kavita-client",
+ "reqwest",
  "rfd",
+ "tokio",
  "uuid",
 ]
 

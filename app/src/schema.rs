@@ -14,6 +14,22 @@ diesel::table! {
 }
 
 diesel::table! {
+    use diesel::sql_types::{Nullable, Text, Timestamp};
+    use crate::models::job::{JobStatusMapping, JobTypeMapping};
+
+    jobs (id) {
+        id -> Text,
+        job_type -> JobTypeMapping,
+        status -> JobStatusMapping,
+        integration_id -> Nullable<Text>,
+        error -> Nullable<Text>,
+        created_at -> Timestamp,
+        started_at -> Nullable<Timestamp>,
+        finished_at -> Nullable<Timestamp>,
+    }
+}
+
+diesel::table! {
     libraries (id) {
         id -> Text,
         name -> Text,
@@ -32,4 +48,4 @@ diesel::table! {
     }
 }
 
-diesel::allow_tables_to_appear_in_same_query!(integrations, libraries, servers,);
+diesel::allow_tables_to_appear_in_same_query!(integrations, jobs, libraries, servers,);

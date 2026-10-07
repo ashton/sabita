@@ -1,5 +1,52 @@
 use kavita_client::client::KavitaClient;
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
+
+use crate::{
+    adapter::LibraryAdapter, models::library::Library,
+    providers::kavita::adapter::KavitaLibraryAdapter,
+};
 
 pub struct KavitaProvider {
     client: KavitaClient,
+}
+
+impl KavitaProvider {
+    /// Exchanges the given API key for a JWT and builds a `KavitaProvider`
+    /// that authenticates all subsequent requests with it.
+    pub async fn authenticate(url: String, api_key: String) -> Result<Self, String> {
+        let unauthenticated_client = KavitaClient::new(url.clone(), reqwest::Client::new());
+        let user = unauthenticated_client
+            .authenticate(&api_key, "Sabita")
+            .await
+            .map_err(|e| e.to_string())?;
+        let token = user
+            .token
+            .ok_or_else(|| "kavita did not return an auth token".to_string())?;
+
+        let mut headers = HeaderMap::new();
+        let value = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|e| e.to_string())?;
+        headers.insert(AUTHORIZATION, value);
+
+        let http_client = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .map_err(|e| e.to_string())?;
+
+        Ok(Self {
+            client: KavitaClient::new(url, http_client),
+        })
+    }
+
+    pub async fn list_libraries(&self) -> Result<Vec<Library>, String> {
+        let libraries = self
+            .client
+            .list_libraries()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(libraries
+            .into_iter()
+            .map(KavitaLibraryAdapter::adapt_library)
+            .collect())
+    }
 }

@@ -1,5 +1,6 @@
 mod adapter;
 pub mod database;
+mod jobs;
 mod menu;
 mod models;
 mod providers;

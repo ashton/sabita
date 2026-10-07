@@ -124,12 +124,12 @@ impl Integrations {
                 ))
             }
 
-            Message::IntegrationCreated(Ok(_)) => {
+            Message::IntegrationCreated(Ok(integration)) => {
                 self.step = Step::List(AsyncModel::Loading);
-                Action::Run(Task::perform(
-                    integration_repository::all(),
-                    Message::IntegrationsLoaded,
-                ))
+                Action::Run(Task::future(async move {
+                    crate::jobs::sync_integration_libraries::spawn(integration.id);
+                    Message::IntegrationsLoaded(integration_repository::all().await)
+                }))
             }
             Message::IntegrationCreated(Err(_)) => Action::None,
         }

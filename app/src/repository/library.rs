@@ -35,3 +35,16 @@ pub async fn create_from_folder(folder: String, name: String) -> Result<Library,
 
     Ok(new_library)
 }
+
+pub async fn create(library: Library) -> Result<Library, String> {
+    use crate::schema::libraries::dsl::libraries;
+
+    let mut conn = database::connect().await.map_err(|e| e.to_string())?;
+    diesel::insert_into(libraries)
+        .values(&library)
+        .execute(&mut conn)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(library)
+}

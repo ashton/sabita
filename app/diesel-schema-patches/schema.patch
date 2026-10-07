@@ -1,6 +1,6 @@
---- a/src/schema.rs	2026-10-07 15:17:47.234054172 -0300
-+++ b/src/schema.rs	2026-10-07 15:17:47.234767904 -0300
-@@ -1,13 +1,16 @@
+--- a/src/schema.rs
++++ b/src/schema.rs
+@@ -1,20 +1,26 @@
  // @generated automatically by Diesel CLI.
  
  diesel::table! {
@@ -18,3 +18,15 @@
  }
  
  diesel::table! {
++    use diesel::sql_types::{Nullable, Text, Timestamp};
++    use crate::models::job::{JobStatusMapping, JobTypeMapping};
++
+     jobs (id) {
+         id -> Text,
+-        job_type -> Text,
+-        status -> Text,
++        job_type -> JobTypeMapping,
++        status -> JobStatusMapping,
+         integration_id -> Nullable<Text>,
+         error -> Nullable<Text>,
+         created_at -> Timestamp,

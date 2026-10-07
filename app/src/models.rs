@@ -1,5 +1,5 @@
-pub mod configuration;
 pub mod integration;
+pub mod job;
 pub mod library;
 pub mod library_item;
 
@@ -10,20 +10,6 @@ pub enum AsyncModel<T, E> {
     Loading,
     Loaded(T),
     Error(E),
-}
-
-impl<T, E> AsyncModel<T, E> {
-    pub fn map<O, R>(self, op: O) -> AsyncModel<R, E>
-    where
-        O: FnOnce(T) -> R,
-    {
-        match self {
-            AsyncModel::NotLoaded => AsyncModel::NotLoaded,
-            AsyncModel::Loading => AsyncModel::Loading,
-            AsyncModel::Loaded(value) => AsyncModel::Loaded(op(value)),
-            AsyncModel::Error(e) => AsyncModel::Error(e),
-        }
-    }
 }
 
 impl<T, E> From<Result<T, E>> for AsyncModel<T, E> {
