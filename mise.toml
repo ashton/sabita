@@ -1,0 +1,28 @@
+[tools]
+"cargo:diesel_cli" = { version = "latest", features = ["sqlite"], default-features = false }
+
+[env]
+DATABASE_URL = "sabita.sqlite3"
+
+[tasks."migration:setup"]
+description = "Create the sqlite database and run pending migrations"
+dir = "app"
+run = "diesel setup"
+
+[tasks."migration:generate"]
+description = "Generate a new migration"
+dir = "app"
+usage = '''
+arg "<name>" help="Migration name (e.g. a table name)"
+'''
+run = 'diesel migration generate "${usage_name}"'
+
+[tasks."migration:apply"]
+description = "Run pending migrations"
+dir = "app"
+run = "diesel migration run"
+
+[tasks."cargo:run"]
+description = "Run the application using cargo run through mise"
+dir = "app"
+run = "cargo run"

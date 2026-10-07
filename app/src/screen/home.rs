@@ -1,0 +1,29 @@
+use iced::{
+    Element, Task,
+    widget::{container, row},
+};
+
+#[derive(Debug, Default)]
+pub struct Home;
+
+#[derive(Clone, Debug)]
+pub enum Message {}
+
+pub enum Action {
+    None,
+    Run(Task<Message>),
+}
+
+impl Home {
+    pub fn new() -> (Self, Task<Message>) {
+        (Self, Task::none())
+    }
+
+    pub fn update(&mut self, message: Message) -> Action {
+        match message {}
+    }
+
+    pub fn view<'a>(&'a self) -> Element<'a, Message> {
+        container(row![]).into()
+    }
+}
