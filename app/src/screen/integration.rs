@@ -113,7 +113,7 @@ mod view_helper {
     use super::{IntegrationModel, IntegrationType, Message};
     use crate::icons;
     use iced::{
-        Center, Element,
+        Background, Border, Center, Element,
         Length::Fill,
         Theme,
         widget::{button, column, container, grid, row, svg, text},
@@ -124,16 +124,65 @@ mod view_helper {
             return empty_list();
         }
 
-        let items = integrations.iter().map(|integration| {
-            row![
-                text(&integration.name),
-                text(integration.integration_type.label())
-            ]
-            .spacing(10)
-            .into()
-        });
+        let rows = integrations.iter().map(integration_row);
 
-        container(column(items)).into()
+        container(column(rows).spacing(8)).padding(20).into()
+    }
+
+    fn integration_row<'a>(integration: &'a IntegrationModel) -> Element<'a, Message> {
+        container(
+            row![
+                icon_badge(integration_icon(integration.integration_type)),
+                column![
+                    text(&integration.name),
+                    text(integration.integration_type.label())
+                        .size(12)
+                        .style(text::secondary),
+                ]
+                .spacing(4),
+            ]
+            .spacing(12)
+            .align_y(Center)
+            .padding(12),
+        )
+        .width(Fill)
+        .style(|theme: &Theme| container::Style {
+            background: Some(Background::Color(
+                theme.extended_palette().background.weak.color,
+            )),
+            border: Border {
+                radius: 8.0.into(),
+                ..Border::default()
+            },
+            ..container::Style::default()
+        })
+        .into()
+    }
+
+    fn icon_badge<'a>(icon: &'static [u8]) -> Element<'a, Message> {
+        container(svg(svg::Handle::from_memory(icon)).width(20).height(20))
+            .center_x(40)
+            .center_y(40)
+            .style(|theme: &Theme| container::Style {
+                background: Some(Background::Color(
+                    theme.extended_palette().background.strong.color,
+                )),
+                border: Border {
+                    radius: 8.0.into(),
+                    ..Border::default()
+                },
+                ..container::Style::default()
+            })
+            .into()
+    }
+
+    fn integration_icon(integration_type: IntegrationType) -> &'static [u8] {
+        match integration_type {
+            IntegrationType::Kavita => icons::KAVITA,
+            IntegrationType::Komga => icons::KOMGA,
+            IntegrationType::Opds => icons::OPDS,
+            IntegrationType::Suwayomi => icons::SUWAYOMI,
+        }
     }
 
     fn empty_list<'a>() -> Element<'a, Message> {

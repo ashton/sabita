@@ -27,7 +27,7 @@ impl ItemAdapter<KavitaSeries> for KavitaItemAdapter {
 pub struct KavitaLibraryAdapter;
 
 impl LibraryAdapter<KavitaLibrary> for KavitaLibraryAdapter {
-    fn adapt_library(source: KavitaLibrary) -> Library {
+    fn adapt_library(source: KavitaLibrary, integration_id: &str) -> Library {
         Library {
             id: Uuid::new_v4().to_string(),
             kind: adapt_library_type(source.library_type),
@@ -35,6 +35,7 @@ impl LibraryAdapter<KavitaLibrary> for KavitaLibraryAdapter {
             external_id: Some(source.id.to_string()),
             folder: None,
             cover: None,
+            integration_id: Some(integration_id.to_string()),
         }
     }
 }
@@ -98,10 +99,11 @@ mod tests {
             ..KavitaLibrary::default()
         };
 
-        let library = KavitaLibraryAdapter::adapt_library(source);
+        let library = KavitaLibraryAdapter::adapt_library(source, "integration-id");
 
         assert_eq!(library.name, "Comics");
         assert_eq!(library.external_id, Some("7".to_string()));
         assert_eq!(library.kind, LibraryType::Manga);
+        assert_eq!(library.integration_id, Some("integration-id".to_string()));
     }
 }

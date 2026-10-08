@@ -28,6 +28,7 @@ pub async fn create_from_folder(folder: String, name: String) -> Result<Library,
         external_id: None,
         folder: Some(folder),
         cover: None,
+        integration_id: None,
     };
 
     let mut conn = database::connect().await.map_err(|e| e.to_string())?;

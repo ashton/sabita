@@ -40,6 +40,7 @@ diesel::table! {
         folder -> Nullable<Text>,
         cover -> Nullable<Text>,
         kind -> LibraryTypeMapping,
+        integration_id -> Nullable<Text>,
     }
 }
 
@@ -51,5 +52,7 @@ diesel::table! {
         url -> Text,
     }
 }
+
+diesel::joinable!(libraries -> integrations (integration_id));
 
 diesel::allow_tables_to_appear_in_same_query!(integrations, jobs, libraries, servers,);

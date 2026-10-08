@@ -45,6 +45,6 @@
          cover -> Nullable<Text>,
 -        kind -> Text,
 +        kind -> LibraryTypeMapping,
+         integration_id -> Nullable<Text>,
      }
  }
- 

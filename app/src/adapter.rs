@@ -5,5 +5,5 @@ pub trait ItemAdapter<T> {
 }
 
 pub trait LibraryAdapter<T> {
-    fn adapt_library(source: T) -> Library;
+    fn adapt_library(source: T, integration_id: &str) -> Library;
 }

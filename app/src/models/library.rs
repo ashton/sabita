@@ -10,6 +10,16 @@ pub enum LibraryType {
     Ebook,
 }
 
+impl LibraryType {
+    pub fn label(&self) -> &'static str {
+        match self {
+            LibraryType::Manga => "Manga",
+            LibraryType::Comic => "Comic",
+            LibraryType::Ebook => "Ebook",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Queryable, Selectable, Insertable, PartialEq)]
 #[diesel(table_name = libraries)]
 pub struct Library {
@@ -19,4 +29,5 @@ pub struct Library {
     pub external_id: Option<String>,
     pub folder: Option<String>,
     pub cover: Option<String>,
+    pub integration_id: Option<String>,
 }

@@ -49,7 +49,7 @@ impl KavitaProvider {
         Self::authenticate(url, api_key).await.map(|_| ())
     }
 
-    pub async fn list_libraries(&self) -> Result<Vec<Library>, String> {
+    pub async fn list_libraries(&self, integration_id: &str) -> Result<Vec<Library>, String> {
         let libraries = self
             .client
             .list_libraries()
@@ -58,7 +58,7 @@ impl KavitaProvider {
 
         Ok(libraries
             .into_iter()
-            .map(KavitaLibraryAdapter::adapt_library)
+            .map(|library| KavitaLibraryAdapter::adapt_library(library, integration_id))
             .collect())
     }
 }

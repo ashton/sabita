@@ -51,7 +51,7 @@ async fn sync(integration_id: &str) -> Result<(), String> {
         .ok_or_else(|| "integration is missing an api key".to_string())?;
 
     let provider = KavitaProvider::authenticate(url, api_key).await?;
-    let remote_libraries = provider.list_libraries().await?;
+    let remote_libraries = provider.list_libraries(integration_id).await?;
     let existing_libraries = library_repository::all().await?;
 
     for library in remote_libraries {
