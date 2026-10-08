@@ -40,16 +40,6 @@ pub enum Action {
 
 impl Kavita {
     pub fn update(&mut self, message: Message) -> Action {
-        let is_leaving_url_field = !matches!(message, Message::UrlChanged(_));
-
-        let action = self.apply(message);
-
-        self.url_invalid = is_leaving_url_field && !is_valid_server_url(&self.url);
-
-        action
-    }
-
-    fn apply(&mut self, message: Message) -> Action {
         match message {
             Message::NameChanged(name) => {
                 self.name = name;
@@ -58,6 +48,7 @@ impl Kavita {
 
             Message::UrlChanged(url) => {
                 self.url = url;
+                self.url_invalid = !is_valid_server_url(&self.url);
                 Action::None
             }
 
@@ -82,11 +73,17 @@ impl Kavita {
             Message::Created(Err(_)) => Action::None,
 
             Message::TestConnectionPressed => {
+                self.url_invalid = !is_valid_server_url(&self.url);
                 self.connection_test = None;
-                Action::Run(Task::perform(
-                    crate::runtime::on_tokio(KavitaProvider::ping(self.url.clone())),
-                    Message::ConnectionTested,
-                ))
+
+                if self.url_invalid {
+                    Action::None
+                } else {
+                    Action::Run(Task::perform(
+                        crate::runtime::on_tokio(KavitaProvider::ping(self.url.clone())),
+                        Message::ConnectionTested,
+                    ))
+                }
             }
 
             Message::ConnectionTested(result) => {
@@ -280,6 +277,7 @@ mod tests {
     #[test]
     fn update_test_connection_pressed_clears_previous_result_and_runs_a_task() {
         let mut kavita = Kavita {
+            url: "http://localhost:5000".to_string(),
             connection_test: Some(Ok(())),
             ..Kavita::default()
         };
@@ -351,32 +349,20 @@ mod tests {
     }
 
     #[test]
-    fn typing_in_the_url_field_does_not_flag_it_as_invalid() {
+    fn typing_an_invalid_url_flags_it_immediately() {
         let mut kavita = Kavita::default();
 
         let _ = kavita.update(Message::UrlChanged("not a url".to_string()));
-
-        assert!(!kavita.url_invalid);
-    }
-
-    #[test]
-    fn leaving_the_url_field_with_an_invalid_value_flags_it() {
-        let mut kavita = Kavita::default();
-        let _ = kavita.update(Message::UrlChanged("not a url".to_string()));
-
-        let _ = kavita.update(Message::NameChanged("My Kavita".to_string()));
 
         assert!(kavita.url_invalid);
     }
 
     #[test]
-    fn leaving_the_url_field_with_a_valid_value_clears_the_flag() {
+    fn typing_a_valid_url_clears_the_flag() {
         let mut kavita = Kavita::default();
         let _ = kavita.update(Message::UrlChanged("not a url".to_string()));
-        let _ = kavita.update(Message::NameChanged("My Kavita".to_string()));
 
         let _ = kavita.update(Message::UrlChanged("http://localhost:5000".to_string()));
-        let _ = kavita.update(Message::NameChanged("My Kavita 2".to_string()));
 
         assert!(!kavita.url_invalid);
     }
@@ -385,7 +371,6 @@ mod tests {
     fn view_renders_error_toast_and_red_border_for_invalid_url() {
         let mut kavita = Kavita::default();
         let _ = kavita.update(Message::UrlChanged("not a url".to_string()));
-        let _ = kavita.update(Message::NameChanged("My Kavita".to_string()));
 
         let mut ui = simulator(kavita.view());
 
@@ -399,5 +384,38 @@ mod tests {
         let mut ui = simulator(kavita.view());
 
         assert!(ui.find("The text must be a valid URL").is_err());
+    }
+
+    #[test]
+    fn test_connection_pressed_with_invalid_url_does_not_run_a_task() {
+        let mut kavita = Kavita::default();
+        let _ = kavita.update(Message::UrlChanged("not a url".to_string()));
+
+        let action = kavita.update(Message::TestConnectionPressed);
+
+        assert!(matches!(action, Action::None));
+        assert!(kavita.url_invalid);
+    }
+
+    #[test]
+    fn view_renders_error_toast_after_pressing_test_connection_with_invalid_url() {
+        let mut kavita = Kavita::default();
+        let _ = kavita.update(Message::UrlChanged("not a url".to_string()));
+        let _ = kavita.update(Message::TestConnectionPressed);
+
+        let mut ui = simulator(kavita.view());
+
+        assert!(ui.find("The text must be a valid URL").is_ok());
+    }
+
+    #[test]
+    fn test_connection_pressed_with_valid_url_runs_a_task() {
+        let mut kavita = Kavita::default();
+        let _ = kavita.update(Message::UrlChanged("http://localhost:5000".to_string()));
+
+        let action = kavita.update(Message::TestConnectionPressed);
+
+        assert!(matches!(action, Action::Run(_)));
+        assert!(!kavita.url_invalid);
     }
 }
