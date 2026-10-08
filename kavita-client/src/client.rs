@@ -1,4 +1,4 @@
-use reqwest::{Client, RequestBuilder, Response};
+use reqwest::{Client, RequestBuilder, Response, Url};
 use serde::de::DeserializeOwned;
 use tracing::debug;
 
@@ -34,7 +34,7 @@ impl KavitaClient {
         };
 
         let method = request.method().clone();
-        let url = request.url().clone();
+        let url = redact_api_key(request.url());
 
         debug!("{method} {url}");
 
@@ -77,5 +77,61 @@ impl KavitaClient {
         }
 
         body
+    }
+}
+
+/// Masks the `apiKey` query parameter, if present, before a URL is logged.
+/// `authenticate` passes the Kavita API key as part of the URL itself
+/// (Kavita's endpoint takes it as a query param, not a header), so logging
+/// requests verbatim would leak it into the logs.
+fn redact_api_key(url: &Url) -> Url {
+    if !url.query_pairs().any(|(key, _)| key == "apiKey") {
+        return url.clone();
+    }
+
+    let redacted_pairs: Vec<(String, String)> = url
+        .query_pairs()
+        .map(|(key, value)| {
+            if key == "apiKey" {
+                (key.into_owned(), "REDACTED".to_string())
+            } else {
+                (key.into_owned(), value.into_owned())
+            }
+        })
+        .collect();
+
+    let mut redacted = url.clone();
+    redacted
+        .query_pairs_mut()
+        .clear()
+        .extend_pairs(redacted_pairs);
+    redacted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redact_api_key_masks_the_api_key_query_param() {
+        let url = Url::parse(
+            "http://localhost:5000/api/Plugin/authenticate?apiKey=secret&pluginName=Sabita",
+        )
+        .unwrap();
+
+        let redacted = redact_api_key(&url);
+
+        assert!(!redacted.as_str().contains("secret"));
+        assert!(redacted.as_str().contains("apiKey=REDACTED"));
+        assert!(redacted.as_str().contains("pluginName=Sabita"));
+    }
+
+    #[test]
+    fn redact_api_key_leaves_other_urls_unchanged() {
+        let url = Url::parse("http://localhost:5000/api/Library/libraries").unwrap();
+
+        let redacted = redact_api_key(&url);
+
+        assert_eq!(redacted, url);
     }
 }
