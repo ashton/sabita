@@ -149,6 +149,7 @@ mod tests {
     fn library_model(name: &str) -> LibraryModel {
         LibraryModel {
             id: "id".to_string(),
+            kind: crate::models::library::LibraryType::Comic,
             name: name.to_string(),
             external_id: None,
             folder: None,

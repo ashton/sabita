@@ -30,12 +30,16 @@ diesel::table! {
 }
 
 diesel::table! {
+    use diesel::sql_types::{Nullable, Text};
+    use crate::models::library::LibraryTypeMapping;
+
     libraries (id) {
         id -> Text,
         name -> Text,
         external_id -> Nullable<Text>,
         folder -> Nullable<Text>,
         cover -> Nullable<Text>,
+        kind -> LibraryTypeMapping,
     }
 }
 

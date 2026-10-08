@@ -2,7 +2,10 @@ use diesel::{QueryDsl, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use uuid::Uuid;
 
-use crate::{database, models::library::Library};
+use crate::{
+    database,
+    models::library::{Library, LibraryType},
+};
 
 pub async fn all() -> Result<Vec<Library>, String> {
     use crate::schema::libraries::dsl::*;
@@ -20,6 +23,7 @@ pub async fn create_from_folder(folder: String, name: String) -> Result<Library,
 
     let new_library = Library {
         id: Uuid::new_v4().to_string(),
+        kind: LibraryType::Comic,
         name,
         external_id: None,
         folder: Some(folder),
