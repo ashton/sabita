@@ -3734,6 +3734,7 @@ dependencies = [
  "reqwest",
  "rfd",
  "tokio",
+ "url",
  "uuid",
 ]
 

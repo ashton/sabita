@@ -10,6 +10,12 @@ pub struct Kavita {
     url: String,
     api_key: String,
     connection_test: Option<Result<(), String>>,
+    url_invalid: bool,
+}
+
+fn is_valid_server_url(value: &str) -> bool {
+    url::Url::parse(value)
+        .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host().is_some())
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -34,6 +40,16 @@ pub enum Action {
 
 impl Kavita {
     pub fn update(&mut self, message: Message) -> Action {
+        let is_leaving_url_field = !matches!(message, Message::UrlChanged(_));
+
+        let action = self.apply(message);
+
+        self.url_invalid = is_leaving_url_field && !is_valid_server_url(&self.url);
+
+        action
+    }
+
+    fn apply(&mut self, message: Message) -> Action {
         match message {
             Message::NameChanged(name) => {
                 self.name = name;
@@ -88,7 +104,7 @@ impl Kavita {
 mod view_helper {
     use super::{Kavita, Message};
     use iced::{
-        Center, Element,
+        Center, Element, Theme,
         widget::{button, column, container, row, text, text_input},
     };
 
@@ -96,7 +112,18 @@ mod view_helper {
         container(
             column![
                 text_input("Name", &kavita.name).on_input(Message::NameChanged),
-                text_input("Server URL", &kavita.url).on_input(Message::UrlChanged),
+                row![
+                    text_input("Server URL", &kavita.url)
+                        .on_input(Message::UrlChanged)
+                        .style(move |theme: &Theme, status| url_input_style(
+                            theme,
+                            status,
+                            kavita.url_invalid
+                        )),
+                    url_error_toast(kavita),
+                ]
+                .spacing(10)
+                .align_y(Center),
                 text_input("API Key", &kavita.api_key).on_input(Message::ApiKeyChanged),
                 row![
                     button("Test Connection").on_press(Message::TestConnectionPressed),
@@ -113,6 +140,30 @@ mod view_helper {
             .spacing(10),
         )
         .into()
+    }
+
+    fn url_input_style(
+        theme: &Theme,
+        status: text_input::Status,
+        url_invalid: bool,
+    ) -> text_input::Style {
+        let mut style = text_input::default(theme, status);
+
+        if url_invalid {
+            style.border.color = theme.extended_palette().danger.base.color;
+        }
+
+        style
+    }
+
+    fn url_error_toast<'a>(kavita: &'a Kavita) -> Element<'a, Message> {
+        if kavita.url_invalid {
+            text("The text must be a valid URL")
+                .style(text::danger)
+                .into()
+        } else {
+            row![].into()
+        }
     }
 
     fn connection_toast<'a>(kavita: &'a Kavita) -> Element<'a, Message> {
@@ -177,6 +228,7 @@ mod tests {
             url: "http://localhost:5000".to_string(),
             api_key: "api-key".to_string(),
             connection_test: None,
+            url_invalid: false,
         };
 
         let action = kavita.update(Message::Submitted);
@@ -283,5 +335,69 @@ mod tests {
             ui.find("It wasn't possible to connect to the server")
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn is_valid_server_url_accepts_http_and_https_urls_with_a_host() {
+        assert!(is_valid_server_url("http://localhost:5000"));
+        assert!(is_valid_server_url("https://kavita.example.com"));
+    }
+
+    #[test]
+    fn is_valid_server_url_rejects_malformed_or_hostless_values() {
+        assert!(!is_valid_server_url(""));
+        assert!(!is_valid_server_url("not a url"));
+        assert!(!is_valid_server_url("file:///etc/passwd"));
+    }
+
+    #[test]
+    fn typing_in_the_url_field_does_not_flag_it_as_invalid() {
+        let mut kavita = Kavita::default();
+
+        let _ = kavita.update(Message::UrlChanged("not a url".to_string()));
+
+        assert!(!kavita.url_invalid);
+    }
+
+    #[test]
+    fn leaving_the_url_field_with_an_invalid_value_flags_it() {
+        let mut kavita = Kavita::default();
+        let _ = kavita.update(Message::UrlChanged("not a url".to_string()));
+
+        let _ = kavita.update(Message::NameChanged("My Kavita".to_string()));
+
+        assert!(kavita.url_invalid);
+    }
+
+    #[test]
+    fn leaving_the_url_field_with_a_valid_value_clears_the_flag() {
+        let mut kavita = Kavita::default();
+        let _ = kavita.update(Message::UrlChanged("not a url".to_string()));
+        let _ = kavita.update(Message::NameChanged("My Kavita".to_string()));
+
+        let _ = kavita.update(Message::UrlChanged("http://localhost:5000".to_string()));
+        let _ = kavita.update(Message::NameChanged("My Kavita 2".to_string()));
+
+        assert!(!kavita.url_invalid);
+    }
+
+    #[test]
+    fn view_renders_error_toast_and_red_border_for_invalid_url() {
+        let mut kavita = Kavita::default();
+        let _ = kavita.update(Message::UrlChanged("not a url".to_string()));
+        let _ = kavita.update(Message::NameChanged("My Kavita".to_string()));
+
+        let mut ui = simulator(kavita.view());
+
+        assert!(ui.find("The text must be a valid URL").is_ok());
+    }
+
+    #[test]
+    fn view_does_not_render_error_toast_for_untouched_url_field() {
+        let kavita = Kavita::default();
+
+        let mut ui = simulator(kavita.view());
+
+        assert!(ui.find("The text must be a valid URL").is_err());
     }
 }
