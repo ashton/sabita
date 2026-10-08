@@ -6,6 +6,7 @@ mod menu;
 mod models;
 mod providers;
 mod repository;
+mod runtime;
 mod schema;
 mod screen;
 

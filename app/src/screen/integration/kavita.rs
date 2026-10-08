@@ -68,7 +68,7 @@ impl Kavita {
             Message::TestConnectionPressed => {
                 self.connection_test = None;
                 Action::Run(Task::perform(
-                    KavitaProvider::ping(self.url.clone()),
+                    crate::runtime::on_tokio(KavitaProvider::ping(self.url.clone())),
                     Message::ConnectionTested,
                 ))
             }
