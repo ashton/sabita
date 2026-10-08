@@ -6,8 +6,6 @@ use crate::models::{
 };
 use crate::repository::integration as integration_repository;
 
-const KAVITA_LOGO: &[u8] = include_bytes!("../../assets/kavita-favicon.ico");
-
 #[derive(Debug, Default)]
 struct KavitaForm {
     name: String,
@@ -79,6 +77,8 @@ impl Integrations {
                 Action::None
             }
 
+            Message::TypeSelected(_) => Action::None,
+
             Message::BackToListPressed => {
                 self.step = Step::List(AsyncModel::Loading);
                 Action::Run(Task::perform(
@@ -146,12 +146,14 @@ impl Integrations {
 }
 
 mod view_helper {
+    use super::{IntegrationModel, IntegrationType, KavitaForm, Message};
+    use crate::icons;
     use iced::{
-        Alignment, Element,
-        widget::{button, column, container, image, row, text, text_input},
+        Center, Element,
+        Length::Fill,
+        Theme,
+        widget::{button, column, container, grid, row, svg, text, text_input},
     };
-
-    use super::{IntegrationModel, IntegrationType, KAVITA_LOGO, KavitaForm, Message};
 
     pub fn list<'a>(integrations: &'a [IntegrationModel]) -> Element<'a, Message> {
         if integrations.is_empty() {
@@ -171,20 +173,39 @@ mod view_helper {
     }
 
     fn empty_list<'a>() -> Element<'a, Message> {
-        container(column![
+        let content = column![
+            svg(svg::Handle::from_memory(icons::PLUG_CONNECT))
+                .height(64)
+                .width(64)
+                .style(|theme: &Theme, _status| svg::Style {
+                    color: Some(theme.extended_palette().background.neutral.color),
+                }),
             text(
                 "Você não tem nenhuma integração cadastrada, adicione uma integração com algum serviço"
             ),
             button("Add Integration").on_press(Message::AddIntegrationPressed)
-        ])
-        .into()
+        ]
+        .spacing(20)
+        .max_width(420)
+        .align_x(Center);
+
+        container(content).center(Fill).into()
     }
 
     pub fn choose_type<'a>() -> Element<'a, Message> {
         container(column![
-            row![type_square("Kavita", KAVITA_LOGO, IntegrationType::Kavita)].spacing(10),
-            button("Back").on_press(Message::BackToListPressed)
+            grid(vec![
+                type_square("Kavita", icons::KAVITA, IntegrationType::Kavita),
+                type_square("Komga", icons::KOMGA, IntegrationType::Komga),
+                type_square("OPDS", icons::OPDS, IntegrationType::Opds),
+                type_square("Suwayomi", icons::SUWAYOMI, IntegrationType::Suwayomi)
+            ])
+            .columns(2)
+            .height(256.0)
+            .width(256.0)
+            .spacing(25),
         ])
+        .center(Fill)
         .into()
     }
 
@@ -194,28 +215,36 @@ mod view_helper {
         integration_type: IntegrationType,
     ) -> Element<'a, Message> {
         button(
-            column![image(image::Handle::from_bytes(logo)).width(64).height(64), text(name)]
-                .align_x(Alignment::Center)
+            container(
+                column![
+                    svg(svg::Handle::from_memory(logo)).width(48).height(48),
+                    text(name)
+                ]
+                .align_x(Center)
                 .spacing(5),
+            )
+            .center(Fill),
         )
-        .width(120)
-        .height(120)
+        .width(Fill)
+        .height(Fill)
         .on_press(Message::TypeSelected(integration_type))
         .into()
     }
 
     pub fn kavita_form<'a>(form: &'a KavitaForm) -> Element<'a, Message> {
-        container(column![
-            text_input("Name", &form.name).on_input(Message::KavitaNameChanged),
-            text_input("Server URL", &form.url).on_input(Message::KavitaUrlChanged),
-            text_input("API Key", &form.api_key).on_input(Message::KavitaApiKeyChanged),
-            row![
-                button("Back").on_press(Message::BackToListPressed),
-                button("Save").on_press(Message::KavitaFormSubmitted)
+        container(
+            column![
+                text_input("Name", &form.name).on_input(Message::KavitaNameChanged),
+                text_input("Server URL", &form.url).on_input(Message::KavitaUrlChanged),
+                text_input("API Key", &form.api_key).on_input(Message::KavitaApiKeyChanged),
+                row![
+                    button("Back").on_press(Message::BackToListPressed),
+                    button("Save").on_press(Message::KavitaFormSubmitted)
+                ]
+                .spacing(10)
             ]
-            .spacing(10)
-        ]
-        .spacing(10))
+            .spacing(10),
+        )
         .into()
     }
 }

@@ -1,5 +1,6 @@
 mod adapter;
 pub mod database;
+mod icons;
 mod jobs;
 mod menu;
 mod models;
@@ -20,8 +21,11 @@ use iced::{
 };
 use screen::Screen;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum Message {
+    ExpandMenu,
+    CollapseMenu,
+    AnimateMenu(iced_anim::Event<f32>),
     OpenSettings,
     OpenHome,
     OpenLibrary,
@@ -44,14 +48,24 @@ impl SabitaApp {
                 screen: Screen::Home(Home {}),
                 menu: Menu::new(
                     vec![
-                        MenuItem::new("bars", false, None),
-                        MenuItem::new("house", true, Some(Message::OpenHome)),
-                        MenuItem::new("book_open", false, Some(Message::OpenLibrary)),
-                        MenuItem::new("magnifying_glass", false, None),
-                        MenuItem::new("download", false, None),
-                        MenuItem::new("cloud", false, Some(Message::OpenIntegrations)),
+                        MenuItem::new("bars", "", false, Some(Message::ExpandMenu)),
+                        MenuItem::new("house", "Home", true, Some(Message::OpenHome)),
+                        MenuItem::new("book_open", "Library", false, Some(Message::OpenLibrary)),
+                        MenuItem::new("magnifying_glass", "Search", false, None),
+                        MenuItem::new("download", "Downloads", false, None),
+                        MenuItem::new(
+                            "cloud",
+                            "Integrations",
+                            false,
+                            Some(Message::OpenIntegrations),
+                        ),
                     ],
-                    vec![MenuItem::new("gear", false, Some(Message::OpenSettings))],
+                    vec![MenuItem::new(
+                        "gear",
+                        "Settings",
+                        false,
+                        Some(Message::OpenSettings),
+                    )],
                 ),
             },
             Task::none(),
@@ -101,6 +115,31 @@ impl SabitaApp {
                 }
             }
 
+            Message::ExpandMenu => {
+                self.menu.set_collapsed(false);
+
+                if let Some(toggle) = self.menu.top_items.first_mut() {
+                    toggle.set_message(Some(Message::CollapseMenu));
+                }
+
+                Task::none()
+            }
+
+            Message::CollapseMenu => {
+                self.menu.set_collapsed(true);
+
+                if let Some(toggle) = self.menu.top_items.first_mut() {
+                    toggle.set_message(Some(Message::ExpandMenu));
+                }
+
+                Task::none()
+            }
+
+            Message::AnimateMenu(event) => {
+                self.menu.animate(event);
+                Task::none()
+            }
+
             Message::OpenSettings => self.open_settings(),
             Message::OpenHome => self.open_home(),
             Message::OpenLibrary => self.open_library(),
@@ -117,8 +156,14 @@ impl SabitaApp {
         };
 
         container(
-            container(row![self.menu.view(), column![topbar(), screen].height(Fill)].height(Fill))
+            container(
+                row![
+                    self.menu.view(Message::AnimateMenu),
+                    column![topbar(), screen].height(Fill)
+                ]
                 .height(Fill),
+            )
+            .height(Fill),
         )
         .width(Length::Fill)
         .height(Length::Fill)
@@ -163,4 +208,68 @@ fn topbar<'a>() -> Container<'a, Message> {
 
 fn main() -> iced::Result {
     iced::application(SabitaApp::new, SabitaApp::update, SabitaApp::view).run()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app() -> SabitaApp {
+        let (app, _task) = SabitaApp::new();
+        app
+    }
+
+    #[test]
+    fn menu_starts_collapsed_with_an_expand_toggle() {
+        let app = app();
+
+        assert!(app.menu.is_collapsed());
+        assert!(!app.menu.is_animating());
+        assert_eq!(app.menu.top_items[0].message(), Some(&Message::ExpandMenu));
+    }
+
+    #[test]
+    fn expanding_the_menu_starts_the_transition_and_flips_the_toggle_to_collapse() {
+        let mut app = app();
+        let collapsed_width = app.menu.width();
+
+        let _ = app.update(Message::ExpandMenu);
+
+        assert!(!app.menu.is_collapsed());
+        assert!(app.menu.is_animating());
+        // The width only grows as the animation ticks, not on the click itself.
+        assert_eq!(app.menu.width(), collapsed_width);
+        assert_eq!(
+            app.menu.top_items[0].message(),
+            Some(&Message::CollapseMenu)
+        );
+    }
+
+    #[test]
+    fn collapsing_the_menu_starts_the_transition_and_flips_the_toggle_back_to_expand() {
+        let mut app = app();
+
+        let _ = app.update(Message::ExpandMenu);
+        let _ = app.update(Message::AnimateMenu(iced_anim::Event::Settle));
+        let expanded_width = app.menu.width();
+
+        let _ = app.update(Message::CollapseMenu);
+        let _ = app.update(Message::AnimateMenu(iced_anim::Event::Settle));
+
+        assert!(app.menu.is_collapsed());
+        assert!(app.menu.width() < expanded_width);
+        assert_eq!(app.menu.top_items[0].message(), Some(&Message::ExpandMenu));
+    }
+
+    #[test]
+    fn animate_menu_events_drive_the_width_to_the_expanded_target() {
+        let mut app = app();
+        let collapsed_width = app.menu.width();
+
+        let _ = app.update(Message::ExpandMenu);
+        let _ = app.update(Message::AnimateMenu(iced_anim::Event::Settle));
+
+        assert!(app.menu.width() > collapsed_width);
+        assert!(!app.menu.is_animating());
+    }
 }

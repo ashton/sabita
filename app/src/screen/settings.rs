@@ -8,7 +8,7 @@ pub struct Settings {
     name: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Message {
     UrlChanged(String),
     NameChanged(String),

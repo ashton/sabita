@@ -6,12 +6,18 @@ use crate::schema::integrations;
 #[derive(Clone, Copy, Debug, DbEnum, PartialEq, Eq)]
 pub enum IntegrationType {
     Kavita,
+    Komga,
+    Opds,
+    Suwayomi,
 }
 
 impl IntegrationType {
     pub fn label(&self) -> &'static str {
         match self {
             IntegrationType::Kavita => "Kavita",
+            IntegrationType::Komga => "Komga",
+            IntegrationType::Suwayomi => "Suwayomi",
+            IntegrationType::Opds => "OPDS Server",
         }
     }
 }

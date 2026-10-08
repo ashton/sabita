@@ -92,10 +92,13 @@ async fn pick_folder() -> Option<PathBuf> {
 
 mod view_helper {
     use iced::{
-        Element,
-        widget::{button, column, container, row, text},
+        Center, Element,
+        Length::Fill,
+        Theme,
+        widget::{button, column, container, row, svg, text},
     };
 
+    use crate::icons;
     use crate::models::library::Library;
 
     pub fn list<'a>(libraries: &'a [Library]) -> Element<'a, super::Message> {
@@ -111,15 +114,29 @@ mod view_helper {
     }
 
     fn empty_list<'a>() -> Element<'a, super::Message> {
-        container(column![
-        text!(
-            "Você não tem nenhuma biblioteca cadastrada, adicione uma pasta ou uma integração com algum serviço"
-        ),
-        row![
-            button("Add Folder").on_press(super::Message::AddFolderPressed),
-            button("Add Connection")
+        let content = column![
+            svg(svg::Handle::from_memory(icons::BOOK_OPEN))
+                .height(64)
+                .width(64)
+                .style(|theme: &Theme, _status| svg::Style {
+                        color: Some(theme.extended_palette().background.neutral.color),
+                    }
+                ),
+            text!(
+                "Você não tem nenhuma biblioteca cadastrada, adicione uma pasta ou uma integração com algum serviço"
+            )
+            .center(),
+            row![
+                button("Add Files"),
+                button("Add Folder").on_press(super::Message::AddFolderPressed),
+            ]
+            .spacing(10),
         ]
-        ]).into()
+        .spacing(20)
+        .max_width(420)
+        .align_x(Center);
+
+        container(content).center(Fill).into()
     }
 }
 
@@ -159,7 +176,7 @@ mod tests {
         let mut ui = simulator(library.view());
 
         assert!(ui.find("Add Folder").is_ok());
-        assert!(ui.find("Add Connection").is_ok());
+        assert!(ui.find("Add Files").is_ok());
     }
 
     #[test]

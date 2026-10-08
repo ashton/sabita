@@ -6,7 +6,7 @@ use iced::{
 #[derive(Debug, Default)]
 pub struct Home;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Message {}
 
 pub enum Action {}
