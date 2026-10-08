@@ -1,8 +1,8 @@
 use super::KavitaClient;
 use crate::models::series::Series;
 use crate::models::series_filter::{
-    SeriesFilter, SeriesFilterComparison, SeriesFilterEntityType, SeriesFilterField,
-    SeriesFilterStatement, SeriesSortField, SeriesSortOption,
+    SeriesFilter, SeriesFilterCombination, SeriesFilterComparison, SeriesFilterEntityType,
+    SeriesFilterField, SeriesFilterStatement, SeriesSortField, SeriesSortOption,
 };
 use serde::Serialize;
 
@@ -40,10 +40,10 @@ impl KavitaClient {
         page_size: Option<u32>,
     ) -> Result<Vec<Series>, reqwest::Error> {
         let filter = SeriesFilter {
-            id: None,
+            id: 0,
             name: None,
-            limit_to: None,
-            combination: None,
+            limit_to: 0,
+            combination: SeriesFilterCombination::And,
             entity_type: SeriesFilterEntityType::Series,
             sort_options: SeriesSortOption {
                 sort_field: SeriesSortField::SortName,
@@ -93,16 +93,16 @@ mod tests {
 
     fn sample_filter() -> SeriesFilter {
         SeriesFilter {
-            id: None,
+            id: 0,
             name: None,
             statements: vec![],
-            combination: Some(SeriesFilterCombination::And),
+            combination: SeriesFilterCombination::And,
             sort_options: SeriesSortOption {
                 sort_field: SeriesSortField::SortName,
                 is_ascending: true,
             },
             entity_type: SeriesFilterEntityType::Series,
-            limit_to: None,
+            limit_to: 0,
         }
     }
 
@@ -126,7 +126,7 @@ mod tests {
         "maxHoursToRead": 2,
         "avgHoursToRead": 1.5,
         "folderPath": "/data/comics/my-series",
-        "isBlackListed": false
+        "isBlacklisted": false
     }"#;
 
     #[tokio::test]
@@ -176,10 +176,10 @@ mod tests {
 
     fn library_filter(library_id: &str) -> SeriesFilter {
         SeriesFilter {
-            id: None,
+            id: 0,
             name: None,
-            limit_to: None,
-            combination: None,
+            limit_to: 0,
+            combination: SeriesFilterCombination::And,
             entity_type: SeriesFilterEntityType::Series,
             sort_options: SeriesSortOption {
                 sort_field: SeriesSortField::SortName,

@@ -122,4 +122,23 @@ mod tests {
 
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn library_reports_the_status_error_on_a_non_success_response() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/Library"))
+            .respond_with(ResponseTemplate::new(400).set_body_raw(
+                r#"{"title":"One or more validation errors occurred.","status":400}"#,
+                "application/json",
+            ))
+            .mount(&mock_server)
+            .await;
+
+        let client = client_for(&mock_server);
+        let error = client.library(5).await.unwrap_err();
+
+        assert_eq!(error.status(), Some(reqwest::StatusCode::BAD_REQUEST));
+    }
 }

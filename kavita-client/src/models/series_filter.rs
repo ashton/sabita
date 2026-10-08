@@ -114,11 +114,15 @@ pub struct SeriesFilterStatement {
 #[derive(Serialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SeriesFilter {
-    pub id: Option<u16>,
+    /// Kavita's `id` is a non-nullable `int` (0 means "not a saved smart
+    /// filter"); sending `null` fails its model validation with a 400.
+    pub id: u32,
     pub name: Option<String>,
     pub statements: Vec<SeriesFilterStatement>,
-    pub combination: Option<SeriesFilterCombination>,
+    /// Also a non-nullable field on Kavita's side, for the same reason.
+    pub combination: SeriesFilterCombination,
     pub sort_options: SeriesSortOption,
     pub entity_type: SeriesFilterEntityType,
-    pub limit_to: Option<u32>,
+    /// Also non-nullable; 0 means "no limit".
+    pub limit_to: u32,
 }

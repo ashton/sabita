@@ -35,5 +35,10 @@ pub struct Series {
     pub max_hours_to_read: u8,
     pub avg_hours_to_read: f32,
     pub folder_path: String,
+    /// Kavita's JSON key is `isBlacklisted` (lowercase "l"), not the
+    /// `isBlackListed` that `is_black_listed` would camelCase to — with
+    /// `#[serde(default)]` the mismatch wouldn't error, just silently leave
+    /// this always `false`.
+    #[serde(rename = "isBlacklisted")]
     pub is_black_listed: bool,
 }
