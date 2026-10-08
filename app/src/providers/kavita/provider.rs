@@ -2,8 +2,9 @@ use kavita_client::client::KavitaClient;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 
 use crate::{
-    adapter::LibraryAdapter, models::library::Library,
-    providers::kavita::adapter::KavitaLibraryAdapter,
+    adapter::{ItemAdapter, LibraryAdapter},
+    models::{library::Library, library_item::LibraryItem},
+    providers::kavita::adapter::{KavitaItemAdapter, KavitaLibraryAdapter},
 };
 
 pub struct KavitaProvider {
@@ -59,6 +60,24 @@ impl KavitaProvider {
         Ok(libraries
             .into_iter()
             .map(|library| KavitaLibraryAdapter::adapt_library(library, integration_id))
+            .collect())
+    }
+
+    pub async fn list_series_of_library(
+        &self,
+        library_id: String,
+        page_number: Option<u32>,
+        page_size: Option<u32>,
+    ) -> Result<Vec<LibraryItem>, String> {
+        let series = self
+            .client
+            .list_series_of_library_paginated(library_id, page_number, page_size)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(series
+            .into_iter()
+            .map(KavitaItemAdapter::adapt_item)
             .collect())
     }
 }

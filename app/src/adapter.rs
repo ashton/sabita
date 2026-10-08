@@ -1,7 +1,7 @@
-use crate::models::{library::Library, library_item::Item};
+use crate::models::{library::Library, library_item::LibraryItem};
 
 pub trait ItemAdapter<T> {
-    fn adapt_item(source: T) -> Item;
+    fn adapt_item(source: T) -> LibraryItem;
 }
 
 pub trait LibraryAdapter<T> {

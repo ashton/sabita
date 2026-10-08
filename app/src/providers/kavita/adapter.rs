@@ -8,18 +8,19 @@ use crate::{
     adapter::{ItemAdapter, LibraryAdapter},
     models::{
         library::{Library, LibraryType},
-        library_item::Item,
+        library_item::LibraryItem,
     },
 };
 
 pub struct KavitaItemAdapter;
 
 impl ItemAdapter<KavitaSeries> for KavitaItemAdapter {
-    fn adapt_item(source: KavitaSeries) -> Item {
-        Item {
+    fn adapt_item(source: KavitaSeries) -> LibraryItem {
+        LibraryItem {
             name: source.name,
             library_id: source.library_id.to_string(),
             cover: source.cover_image,
+            pages: (source.pages > 0).then_some(source.pages),
         }
     }
 }
@@ -105,5 +106,35 @@ mod tests {
         assert_eq!(library.external_id, Some("7".to_string()));
         assert_eq!(library.kind, LibraryType::Manga);
         assert_eq!(library.integration_id, Some("integration-id".to_string()));
+    }
+
+    #[test]
+    fn adapt_item_maps_fields_and_pages() {
+        let source = KavitaSeries {
+            name: "One Piece".to_string(),
+            cover_image: "/api/image/series-cover?seriesId=1".to_string(),
+            library_id: 7,
+            pages: 42,
+            ..KavitaSeries::default()
+        };
+
+        let item = KavitaItemAdapter::adapt_item(source);
+
+        assert_eq!(item.name, "One Piece");
+        assert_eq!(item.cover, "/api/image/series-cover?seriesId=1");
+        assert_eq!(item.library_id, "7");
+        assert_eq!(item.pages, Some(42));
+    }
+
+    #[test]
+    fn adapt_item_maps_zero_pages_to_none() {
+        let source = KavitaSeries {
+            pages: 0,
+            ..KavitaSeries::default()
+        };
+
+        let item = KavitaItemAdapter::adapt_item(source);
+
+        assert_eq!(item.pages, None);
     }
 }
