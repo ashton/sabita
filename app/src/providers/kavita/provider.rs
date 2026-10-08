@@ -44,6 +44,11 @@ impl KavitaProvider {
         client.health().await.map_err(|e| e.to_string())
     }
 
+    /// Checks whether `api_key` is valid for the Kavita server at `url`.
+    pub async fn check_authentication(url: String, api_key: String) -> Result<(), String> {
+        Self::authenticate(url, api_key).await.map(|_| ())
+    }
+
     pub async fn list_libraries(&self) -> Result<Vec<Library>, String> {
         let libraries = self
             .client

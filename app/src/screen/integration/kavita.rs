@@ -10,6 +10,7 @@ pub struct Kavita {
     url: String,
     api_key: String,
     connection_test: Option<Result<(), String>>,
+    authentication_test: Option<Result<(), String>>,
     url_invalid: bool,
 }
 
@@ -28,6 +29,7 @@ pub enum Message {
     Created(Result<IntegrationModel, String>),
     TestConnectionPressed,
     ConnectionTested(Result<(), String>),
+    AuthenticationTested(Result<(), String>),
 }
 
 #[derive(Debug)]
@@ -75,19 +77,39 @@ impl Kavita {
             Message::TestConnectionPressed => {
                 self.url_invalid = !is_valid_server_url(&self.url);
                 self.connection_test = None;
+                self.authentication_test = None;
 
                 if self.url_invalid {
                     Action::None
                 } else {
-                    Action::Run(Task::perform(
+                    let connection_task = Task::perform(
                         crate::runtime::on_tokio(KavitaProvider::ping(self.url.clone())),
                         Message::ConnectionTested,
-                    ))
+                    );
+
+                    if self.api_key.is_empty() {
+                        Action::Run(connection_task)
+                    } else {
+                        let authentication_task = Task::perform(
+                            crate::runtime::on_tokio(KavitaProvider::check_authentication(
+                                self.url.clone(),
+                                self.api_key.clone(),
+                            )),
+                            Message::AuthenticationTested,
+                        );
+
+                        Action::Run(Task::batch([connection_task, authentication_task]))
+                    }
                 }
             }
 
             Message::ConnectionTested(result) => {
                 self.connection_test = Some(result);
+                Action::None
+            }
+
+            Message::AuthenticationTested(result) => {
+                self.authentication_test = Some(result);
                 Action::None
             }
         }
@@ -125,6 +147,7 @@ mod view_helper {
                 row![
                     button("Test Connection").on_press(Message::TestConnectionPressed),
                     connection_toast(kavita),
+                    authentication_toast(kavita),
                 ]
                 .spacing(10)
                 .align_y(Center),
@@ -165,8 +188,22 @@ mod view_helper {
 
     fn connection_toast<'a>(kavita: &'a Kavita) -> Element<'a, Message> {
         match &kavita.connection_test {
-            Some(Ok(())) => text("Connection successful").style(text::success).into(),
+            Some(Ok(())) => text("Server connection successful")
+                .style(text::success)
+                .into(),
             Some(Err(_)) => text("It wasn't possible to connect to the server")
+                .style(text::danger)
+                .into(),
+            None => row![].into(),
+        }
+    }
+
+    fn authentication_toast<'a>(kavita: &'a Kavita) -> Element<'a, Message> {
+        match &kavita.authentication_test {
+            Some(Ok(())) => text("Authentication successful")
+                .style(text::success)
+                .into(),
+            Some(Err(_)) => text("It wasn't possible to authenticate")
                 .style(text::danger)
                 .into(),
             None => row![].into(),
@@ -225,6 +262,7 @@ mod tests {
             url: "http://localhost:5000".to_string(),
             api_key: "api-key".to_string(),
             connection_test: None,
+            authentication_test: None,
             url_invalid: false,
         };
 
@@ -275,10 +313,11 @@ mod tests {
     }
 
     #[test]
-    fn update_test_connection_pressed_clears_previous_result_and_runs_a_task() {
+    fn update_test_connection_pressed_clears_previous_results_and_runs_a_task() {
         let mut kavita = Kavita {
             url: "http://localhost:5000".to_string(),
             connection_test: Some(Ok(())),
+            authentication_test: Some(Ok(())),
             ..Kavita::default()
         };
 
@@ -286,6 +325,21 @@ mod tests {
 
         assert!(matches!(action, Action::Run(_)));
         assert_eq!(kavita.connection_test, None);
+        assert_eq!(kavita.authentication_test, None);
+    }
+
+    #[test]
+    fn update_test_connection_pressed_without_api_key_runs_only_the_connection_task() {
+        let mut kavita = Kavita {
+            url: "http://localhost:5000".to_string(),
+            authentication_test: Some(Ok(())),
+            ..Kavita::default()
+        };
+
+        let action = kavita.update(Message::TestConnectionPressed);
+
+        assert!(matches!(action, Action::Run(_)));
+        assert_eq!(kavita.authentication_test, None);
     }
 
     #[test]
@@ -309,7 +363,27 @@ mod tests {
     }
 
     #[test]
-    fn view_renders_success_message_after_successful_test() {
+    fn update_authentication_tested_ok_stores_success() {
+        let mut kavita = Kavita::default();
+
+        let action = kavita.update(Message::AuthenticationTested(Ok(())));
+
+        assert!(matches!(action, Action::None));
+        assert_eq!(kavita.authentication_test, Some(Ok(())));
+    }
+
+    #[test]
+    fn update_authentication_tested_err_stores_error() {
+        let mut kavita = Kavita::default();
+
+        let action = kavita.update(Message::AuthenticationTested(Err("boom".to_string())));
+
+        assert!(matches!(action, Action::None));
+        assert_eq!(kavita.authentication_test, Some(Err("boom".to_string())));
+    }
+
+    #[test]
+    fn view_renders_success_message_after_successful_connection_test() {
         let kavita = Kavita {
             connection_test: Some(Ok(())),
             ..Kavita::default()
@@ -317,11 +391,11 @@ mod tests {
 
         let mut ui = simulator(kavita.view());
 
-        assert!(ui.find("Connection successful").is_ok());
+        assert!(ui.find("Server connection successful").is_ok());
     }
 
     #[test]
-    fn view_renders_generic_error_message_after_failed_test() {
+    fn view_renders_generic_error_message_after_failed_connection_test() {
         let kavita = Kavita {
             connection_test: Some(Err("connection refused".to_string())),
             ..Kavita::default()
@@ -333,6 +407,44 @@ mod tests {
             ui.find("It wasn't possible to connect to the server")
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn view_renders_success_message_after_successful_authentication_test() {
+        let kavita = Kavita {
+            authentication_test: Some(Ok(())),
+            ..Kavita::default()
+        };
+
+        let mut ui = simulator(kavita.view());
+
+        assert!(ui.find("Authentication successful").is_ok());
+    }
+
+    #[test]
+    fn view_renders_generic_error_message_after_failed_authentication_test() {
+        let kavita = Kavita {
+            authentication_test: Some(Err("unauthorized".to_string())),
+            ..Kavita::default()
+        };
+
+        let mut ui = simulator(kavita.view());
+
+        assert!(ui.find("It wasn't possible to authenticate").is_ok());
+    }
+
+    #[test]
+    fn view_renders_both_toasts_at_once() {
+        let kavita = Kavita {
+            connection_test: Some(Ok(())),
+            authentication_test: Some(Err("unauthorized".to_string())),
+            ..Kavita::default()
+        };
+
+        let mut ui = simulator(kavita.view());
+
+        assert!(ui.find("Server connection successful").is_ok());
+        assert!(ui.find("It wasn't possible to authenticate").is_ok());
     }
 
     #[test]
