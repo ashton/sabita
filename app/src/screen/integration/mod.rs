@@ -1,3 +1,5 @@
+pub mod kavita;
+
 use iced::{Element, Task, widget::container};
 
 use crate::models::{
@@ -5,19 +7,13 @@ use crate::models::{
     integration::{Integration as IntegrationModel, IntegrationType},
 };
 use crate::repository::integration as integration_repository;
-
-#[derive(Debug, Default)]
-struct KavitaForm {
-    name: String,
-    url: String,
-    api_key: String,
-}
+use kavita::Kavita;
 
 #[derive(Debug)]
 enum Step {
     List(AsyncModel<Vec<IntegrationModel>, String>),
     ChooseType,
-    KavitaForm(KavitaForm),
+    Kavita(Kavita),
 }
 
 #[derive(Debug)]
@@ -38,12 +34,7 @@ pub enum Message {
     IntegrationsLoaded(Result<Vec<IntegrationModel>, String>),
     AddIntegrationPressed,
     TypeSelected(IntegrationType),
-    BackToListPressed,
-    KavitaNameChanged(String),
-    KavitaUrlChanged(String),
-    KavitaApiKeyChanged(String),
-    KavitaFormSubmitted,
-    IntegrationCreated(Result<IntegrationModel, String>),
+    Kavita(kavita::Message),
 }
 
 #[derive(Debug)]
@@ -73,66 +64,39 @@ impl Integrations {
             }
 
             Message::TypeSelected(IntegrationType::Kavita) => {
-                self.step = Step::KavitaForm(KavitaForm::default());
+                self.step = Step::Kavita(Kavita::default());
                 Action::None
             }
 
             Message::TypeSelected(_) => Action::None,
 
-            Message::BackToListPressed => {
-                self.step = Step::List(AsyncModel::Loading);
-                Action::Run(Task::perform(
-                    integration_repository::all(),
-                    Message::IntegrationsLoaded,
-                ))
-            }
-
-            Message::KavitaNameChanged(name) => {
-                if let Step::KavitaForm(form) = &mut self.step {
-                    form.name = name;
-                }
-                Action::None
-            }
-
-            Message::KavitaUrlChanged(url) => {
-                if let Step::KavitaForm(form) = &mut self.step {
-                    form.url = url;
-                }
-                Action::None
-            }
-
-            Message::KavitaApiKeyChanged(api_key) => {
-                if let Step::KavitaForm(form) = &mut self.step {
-                    form.api_key = api_key;
-                }
-                Action::None
-            }
-
-            Message::KavitaFormSubmitted => {
-                let Step::KavitaForm(form) = &self.step else {
+            Message::Kavita(msg) => {
+                let Step::Kavita(kavita) = &mut self.step else {
                     return Action::None;
                 };
 
-                Action::Run(Task::perform(
-                    integration_repository::create(
-                        form.name.clone(),
-                        IntegrationType::Kavita,
-                        Some(form.url.clone()),
-                        Some(form.api_key.clone()),
-                    ),
-                    Message::IntegrationCreated,
-                ))
+                match kavita.update(msg) {
+                    kavita::Action::None => Action::None,
+                    kavita::Action::Run(task) => Action::Run(task.map(Message::Kavita)),
+                    kavita::Action::BackPressed => self.reload_list(),
+                    kavita::Action::Created(integration) => {
+                        self.step = Step::List(AsyncModel::Loading);
+                        Action::Run(Task::future(async move {
+                            crate::jobs::sync_integration_libraries::spawn(integration.id);
+                            Message::IntegrationsLoaded(integration_repository::all().await)
+                        }))
+                    }
+                }
             }
-
-            Message::IntegrationCreated(Ok(integration)) => {
-                self.step = Step::List(AsyncModel::Loading);
-                Action::Run(Task::future(async move {
-                    crate::jobs::sync_integration_libraries::spawn(integration.id);
-                    Message::IntegrationsLoaded(integration_repository::all().await)
-                }))
-            }
-            Message::IntegrationCreated(Err(_)) => Action::None,
         }
+    }
+
+    fn reload_list(&mut self) -> Action {
+        self.step = Step::List(AsyncModel::Loading);
+        Action::Run(Task::perform(
+            integration_repository::all(),
+            Message::IntegrationsLoaded,
+        ))
     }
 
     pub fn view<'a>(&'a self) -> Element<'a, Message> {
@@ -140,19 +104,19 @@ impl Integrations {
             Step::List(AsyncModel::Loaded(integrations)) => view_helper::list(integrations),
             Step::List(_) => container(iced::widget::row![]).into(),
             Step::ChooseType => view_helper::choose_type(),
-            Step::KavitaForm(form) => view_helper::kavita_form(form),
+            Step::Kavita(kavita) => kavita.view().map(Message::Kavita),
         }
     }
 }
 
 mod view_helper {
-    use super::{IntegrationModel, IntegrationType, KavitaForm, Message};
+    use super::{IntegrationModel, IntegrationType, Message};
     use crate::icons;
     use iced::{
         Center, Element,
         Length::Fill,
         Theme,
-        widget::{button, column, container, grid, row, svg, text, text_input},
+        widget::{button, column, container, grid, row, svg, text},
     };
 
     pub fn list<'a>(integrations: &'a [IntegrationModel]) -> Element<'a, Message> {
@@ -228,23 +192,6 @@ mod view_helper {
         .width(Fill)
         .height(Fill)
         .on_press(Message::TypeSelected(integration_type))
-        .into()
-    }
-
-    pub fn kavita_form<'a>(form: &'a KavitaForm) -> Element<'a, Message> {
-        container(
-            column![
-                text_input("Name", &form.name).on_input(Message::KavitaNameChanged),
-                text_input("Server URL", &form.url).on_input(Message::KavitaUrlChanged),
-                text_input("API Key", &form.api_key).on_input(Message::KavitaApiKeyChanged),
-                row![
-                    button("Back").on_press(Message::BackToListPressed),
-                    button("Save").on_press(Message::KavitaFormSubmitted)
-                ]
-                .spacing(10)
-            ]
-            .spacing(10),
-        )
         .into()
     }
 }
@@ -359,72 +306,32 @@ mod tests {
         let action = integrations.update(Message::TypeSelected(IntegrationType::Kavita));
 
         assert!(matches!(action, Action::None));
-        assert!(matches!(integrations.step, Step::KavitaForm(_)));
+        assert!(matches!(integrations.step, Step::Kavita(_)));
     }
 
     #[test]
-    fn view_kavita_form_renders_inputs_and_buttons() {
-        let integrations = Integrations {
-            step: Step::KavitaForm(KavitaForm::default()),
-        };
-
-        let mut ui = simulator(integrations.view());
-
-        assert!(ui.find("Back").is_ok());
-        assert!(ui.find("Save").is_ok());
-    }
-
-    #[test]
-    fn update_kavita_name_changed_stores_value() {
+    fn update_kavita_back_pressed_returns_to_list_and_reloads() {
         let mut integrations = Integrations {
-            step: Step::KavitaForm(KavitaForm::default()),
+            step: Step::Kavita(Kavita::default()),
         };
 
-        let _ = integrations.update(Message::KavitaNameChanged("My Kavita".to_string()));
-
-        let Step::KavitaForm(form) = &integrations.step else {
-            panic!("expected KavitaForm step");
-        };
-        assert_eq!(form.name, "My Kavita");
-    }
-
-    #[test]
-    fn update_kavita_form_submitted_runs_a_task() {
-        let mut integrations = Integrations {
-            step: Step::KavitaForm(KavitaForm {
-                name: "My Kavita".to_string(),
-                url: "http://localhost:5000".to_string(),
-                api_key: "api-key".to_string(),
-            }),
-        };
-
-        let action = integrations.update(Message::KavitaFormSubmitted);
-
-        assert!(matches!(action, Action::Run(_)));
-    }
-
-    #[test]
-    fn update_integration_created_ok_returns_to_list_and_reloads() {
-        let mut integrations = Integrations {
-            step: Step::KavitaForm(KavitaForm::default()),
-        };
-
-        let action = integrations.update(Message::IntegrationCreated(Ok(integration_model(
-            "My Kavita",
-        ))));
+        let action = integrations.update(Message::Kavita(kavita::Message::BackPressed));
 
         assert!(matches!(action, Action::Run(_)));
         assert!(matches!(integrations.step, Step::List(AsyncModel::Loading)));
     }
 
     #[test]
-    fn update_integration_created_err_returns_no_action() {
+    fn update_kavita_created_returns_to_list_and_reloads() {
         let mut integrations = Integrations {
-            step: Step::KavitaForm(KavitaForm::default()),
+            step: Step::Kavita(Kavita::default()),
         };
 
-        let action = integrations.update(Message::IntegrationCreated(Err("boom".to_string())));
+        let action = integrations.update(Message::Kavita(kavita::Message::Created(Ok(
+            integration_model("My Kavita"),
+        ))));
 
-        assert!(matches!(action, Action::None));
+        assert!(matches!(action, Action::Run(_)));
+        assert!(matches!(integrations.step, Step::List(AsyncModel::Loading)));
     }
 }

@@ -11,7 +11,7 @@ mod screen;
 
 use crate::{
     menu::{Menu, MenuItem},
-    screen::{Home, home, integrations, library, settings},
+    screen::{Home, home, integration, library, settings},
 };
 use iced::{
     Element,
@@ -33,7 +33,7 @@ enum Message {
     Settings(settings::Message),
     Home(home::Message),
     Library(library::Message),
-    Integrations(integrations::Message),
+    Integrations(integration::Message),
 }
 
 struct SabitaApp {
@@ -110,8 +110,8 @@ impl SabitaApp {
                 };
 
                 match integrations.update(msg) {
-                    integrations::Action::None => Task::none(),
-                    integrations::Action::Run(task) => task.map(Message::Integrations),
+                    integration::Action::None => Task::none(),
+                    integration::Action::Run(task) => task.map(Message::Integrations),
                 }
             }
 
