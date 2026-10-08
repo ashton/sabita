@@ -27,12 +27,14 @@ pub async fn create(
         finished_at: None,
     };
 
-    let mut conn = database::connect().await.map_err(|e| e.to_string())?;
+    let mut conn = database::connect()
+        .await
+        .map_err(crate::error::log_and_stringify)?;
     diesel::insert_into(jobs)
         .values(&new_job)
         .execute(&mut conn)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::log_and_stringify)?;
 
     Ok(new_job)
 }
@@ -47,7 +49,9 @@ pub async fn update_status(
     let finished = matches!(new_status, JobStatus::Completed | JobStatus::Failed)
         .then(|| Utc::now().naive_utc());
 
-    let mut conn = database::connect().await.map_err(|e| e.to_string())?;
+    let mut conn = database::connect()
+        .await
+        .map_err(crate::error::log_and_stringify)?;
     diesel::update(jobs.filter(id.eq(job_id)))
         .set((
             status.eq(new_status),
@@ -56,7 +60,7 @@ pub async fn update_status(
         ))
         .execute(&mut conn)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::log_and_stringify)?;
 
     Ok(())
 }

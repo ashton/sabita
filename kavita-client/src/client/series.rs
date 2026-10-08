@@ -21,17 +21,16 @@ impl KavitaClient {
         page_number: Option<u32>,
         page_size: Option<u32>,
     ) -> Result<Vec<Series>, reqwest::Error> {
-        self.http_client
-            .post(format!("{}/api/Series/v2", self.base_url))
-            .query(&SeriesFilterParams {
-                page_number,
-                page_size,
-            })
-            .json(filter)
-            .send()
-            .await?
-            .json()
-            .await
+        self.execute_json(
+            self.http_client
+                .post(format!("{}/api/Series/v2", self.base_url))
+                .query(&SeriesFilterParams {
+                    page_number,
+                    page_size,
+                })
+                .json(filter),
+        )
+        .await
     }
 
     pub async fn list_series_of_library_paginated(
@@ -57,17 +56,16 @@ impl KavitaClient {
             }],
         };
 
-        self.http_client
-            .post(format!("{}/api/Series/v2", self.base_url))
-            .query(&SeriesFilterParams {
-                page_number,
-                page_size,
-            })
-            .json(&filter)
-            .send()
-            .await?
-            .json()
-            .await
+        self.execute_json(
+            self.http_client
+                .post(format!("{}/api/Series/v2", self.base_url))
+                .query(&SeriesFilterParams {
+                    page_number,
+                    page_size,
+                })
+                .json(&filter),
+        )
+        .await
     }
 
     pub async fn list_series_of_library(

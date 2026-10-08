@@ -1,5 +1,6 @@
 mod adapter;
 pub mod database;
+mod error;
 mod icons;
 mod jobs;
 mod menu;
@@ -267,6 +268,14 @@ fn topbar<'a>() -> Container<'a, Message> {
 }
 
 fn main() -> iced::Result {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                tracing_subscriber::EnvFilter::new("sabita_app=debug,kavita_client=debug")
+            }),
+        )
+        .init();
+
     iced::application(SabitaApp::new, SabitaApp::update, SabitaApp::view)
         .subscription(SabitaApp::subscription)
         .run()

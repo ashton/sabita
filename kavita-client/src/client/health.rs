@@ -1,14 +1,22 @@
+use tracing::debug;
+
 use crate::client::KavitaClient;
 
 impl KavitaClient {
     /// Hits Kavita's health check endpoint, returning an error if the server
     /// is unreachable or responds with a non-success status.
     pub async fn health(&self) -> Result<(), reqwest::Error> {
-        self.http_client
-            .get(format!("{}/api/Health", self.base_url))
-            .send()
-            .await?
-            .error_for_status()?;
+        let response = self
+            .execute(
+                self.http_client
+                    .get(format!("{}/api/Health", self.base_url)),
+            )
+            .await?;
+
+        if let Err(error) = response.error_for_status() {
+            debug!("health check returned an error status: {error}");
+            return Err(error);
+        }
 
         Ok(())
     }

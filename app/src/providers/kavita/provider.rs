@@ -19,19 +19,20 @@ impl KavitaProvider {
         let user = unauthenticated_client
             .authenticate(&api_key, "Sabita")
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::log_and_stringify)?;
         let token = user
             .token
             .ok_or_else(|| "kavita did not return an auth token".to_string())?;
 
         let mut headers = HeaderMap::new();
-        let value = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|e| e.to_string())?;
+        let value = HeaderValue::from_str(&format!("Bearer {token}"))
+            .map_err(crate::error::log_and_stringify)?;
         headers.insert(AUTHORIZATION, value);
 
         let http_client = reqwest::Client::builder()
             .default_headers(headers)
             .build()
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::log_and_stringify)?;
 
         Ok(Self {
             client: KavitaClient::new(url, http_client),
@@ -42,7 +43,10 @@ impl KavitaProvider {
     /// requiring authentication.
     pub async fn ping(url: String) -> Result<(), String> {
         let client = KavitaClient::new(url, reqwest::Client::new());
-        client.health().await.map_err(|e| e.to_string())
+        client
+            .health()
+            .await
+            .map_err(crate::error::log_and_stringify)
     }
 
     /// Checks whether `api_key` is valid for the Kavita server at `url`.
@@ -55,7 +59,7 @@ impl KavitaProvider {
             .client
             .list_libraries()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::log_and_stringify)?;
 
         Ok(libraries
             .into_iter()
@@ -73,7 +77,7 @@ impl KavitaProvider {
             .client
             .list_series_of_library_paginated(library_id, page_number, page_size)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::log_and_stringify)?;
 
         Ok(series
             .into_iter()

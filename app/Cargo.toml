@@ -16,5 +16,7 @@ kavita-client = { path = "../kavita-client" }
 reqwest = "0.13"
 rfd = { version = "0.17.2", features = ["xdg-portal"] }
 tokio = { version = "1", features = ["rt", "sync"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }

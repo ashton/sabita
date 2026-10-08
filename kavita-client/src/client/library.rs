@@ -3,33 +3,27 @@ use crate::models::library::KavitaLibrary;
 
 impl KavitaClient {
     pub async fn list_libraries(&self) -> Result<Vec<KavitaLibrary>, reqwest::Error> {
-        self.http_client
-            .get(format!("{}/api/Library/libraries", self.base_url))
-            .send()
-            .await?
-            .json()
-            .await
+        self.execute_json(
+            self.http_client
+                .get(format!("{}/api/Library/libraries", self.base_url)),
+        )
+        .await
     }
 
     pub async fn library(&self, id: u16) -> Result<KavitaLibrary, reqwest::Error> {
-        self.http_client
-            .get(format!("{}/api/Library?libraryId={}", self.base_url, id))
-            .send()
-            .await?
-            .json()
-            .await
+        self.execute_json(
+            self.http_client
+                .get(format!("{}/api/Library?libraryId={}", self.base_url, id)),
+        )
+        .await
     }
 
     pub async fn user_libraries(&self, user_id: u32) -> Result<Vec<KavitaLibrary>, reqwest::Error> {
-        self.http_client
-            .get(format!(
-                "{}/api/Library/user-libraries?userId={}",
-                self.base_url, user_id
-            ))
-            .send()
-            .await?
-            .json()
-            .await
+        self.execute_json(self.http_client.get(format!(
+            "{}/api/Library/user-libraries?userId={}",
+            self.base_url, user_id
+        )))
+        .await
     }
 }
 

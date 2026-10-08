@@ -10,24 +10,28 @@ use crate::{
 pub async fn all() -> Result<Vec<Integration>, String> {
     use crate::schema::integrations::dsl::*;
 
-    let mut conn = database::connect().await.map_err(|e| e.to_string())?;
+    let mut conn = database::connect()
+        .await
+        .map_err(crate::error::log_and_stringify)?;
     integrations
         .select(Integration::as_select())
         .load(&mut conn)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::log_and_stringify)
 }
 
 pub async fn find(integration_id: &str) -> Result<Integration, String> {
     use crate::schema::integrations::dsl::*;
 
-    let mut conn = database::connect().await.map_err(|e| e.to_string())?;
+    let mut conn = database::connect()
+        .await
+        .map_err(crate::error::log_and_stringify)?;
     integrations
         .filter(id.eq(integration_id))
         .select(Integration::as_select())
         .first(&mut conn)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::log_and_stringify)
 }
 
 pub async fn create(
@@ -46,12 +50,14 @@ pub async fn create(
         api_key,
     };
 
-    let mut conn = database::connect().await.map_err(|e| e.to_string())?;
+    let mut conn = database::connect()
+        .await
+        .map_err(crate::error::log_and_stringify)?;
     diesel::insert_into(integrations)
         .values(&new_integration)
         .execute(&mut conn)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::log_and_stringify)?;
 
     Ok(new_integration)
 }

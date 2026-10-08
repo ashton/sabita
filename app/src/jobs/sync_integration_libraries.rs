@@ -26,7 +26,10 @@ async fn run(integration_id: String) {
     .await
     {
         Ok(job) => job,
-        Err(_) => return,
+        Err(error) => {
+            tracing::debug!("failed to create sync-integration-libraries job: {error}");
+            return;
+        }
     };
 
     match sync(&integration_id).await {
@@ -34,6 +37,7 @@ async fn run(integration_id: String) {
             let _ = job_repository::update_status(job.id, JobStatus::Completed, None).await;
         }
         Err(error) => {
+            tracing::debug!("sync-integration-libraries job failed: {error}");
             let _ = job_repository::update_status(job.id, JobStatus::Failed, Some(error)).await;
         }
     }
