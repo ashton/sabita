@@ -118,7 +118,9 @@ mod view_helper {
     fn connection_toast<'a>(kavita: &'a Kavita) -> Element<'a, Message> {
         match &kavita.connection_test {
             Some(Ok(())) => text("Connection successful").style(text::success).into(),
-            Some(Err(error)) => text(error).style(text::danger).into(),
+            Some(Err(_)) => text("It wasn't possible to connect to the server")
+                .style(text::danger)
+                .into(),
             None => row![].into(),
         }
     }
@@ -269,7 +271,7 @@ mod tests {
     }
 
     #[test]
-    fn view_renders_error_message_after_failed_test() {
+    fn view_renders_generic_error_message_after_failed_test() {
         let kavita = Kavita {
             connection_test: Some(Err("connection refused".to_string())),
             ..Kavita::default()
@@ -277,6 +279,9 @@ mod tests {
 
         let mut ui = simulator(kavita.view());
 
-        assert!(ui.find("connection refused").is_ok());
+        assert!(
+            ui.find("It wasn't possible to connect to the server")
+                .is_ok()
+        );
     }
 }

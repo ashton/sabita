@@ -17,7 +17,7 @@ use crate::{
 use iced::{
     Element,
     Length::{self, Fill},
-    Task,
+    Subscription, Task, keyboard,
     widget::{Container, column, container, row},
 };
 use screen::Screen;
@@ -27,6 +27,7 @@ enum Message {
     ExpandMenu,
     CollapseMenu,
     AnimateMenu(iced_anim::Event<f32>),
+    TabPressed { shift: bool },
     OpenSettings,
     OpenHome,
     OpenLibrary,
@@ -141,6 +142,14 @@ impl SabitaApp {
                 Task::none()
             }
 
+            Message::TabPressed { shift } => {
+                if shift {
+                    iced::widget::operation::focus_previous()
+                } else {
+                    iced::widget::operation::focus_next()
+                }
+            }
+
             Message::OpenSettings => self.open_settings(),
             Message::OpenHome => self.open_home(),
             Message::OpenLibrary => self.open_library(),
@@ -201,6 +210,23 @@ impl SabitaApp {
 
         task.map(Message::Integrations)
     }
+
+    pub fn subscription(&self) -> Subscription<Message> {
+        keyboard::listen().filter_map(tab_pressed_message)
+    }
+}
+
+fn tab_pressed_message(event: keyboard::Event) -> Option<Message> {
+    match event {
+        keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(keyboard::key::Named::Tab),
+            modifiers,
+            ..
+        } => Some(Message::TabPressed {
+            shift: modifiers.shift(),
+        }),
+        _ => None,
+    }
 }
 
 fn topbar<'a>() -> Container<'a, Message> {
@@ -208,7 +234,9 @@ fn topbar<'a>() -> Container<'a, Message> {
 }
 
 fn main() -> iced::Result {
-    iced::application(SabitaApp::new, SabitaApp::update, SabitaApp::view).run()
+    iced::application(SabitaApp::new, SabitaApp::update, SabitaApp::view)
+        .subscription(SabitaApp::subscription)
+        .run()
 }
 
 #[cfg(test)]
@@ -272,5 +300,46 @@ mod tests {
 
         assert!(app.menu.width() > collapsed_width);
         assert!(!app.menu.is_animating());
+    }
+
+    fn tab_key_press(modifiers: keyboard::Modifiers) -> keyboard::Event {
+        keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(keyboard::key::Named::Tab),
+            modified_key: keyboard::Key::Named(keyboard::key::Named::Tab),
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Tab),
+            location: keyboard::Location::Standard,
+            modifiers,
+            text: None,
+            repeat: false,
+        }
+    }
+
+    #[test]
+    fn tab_key_press_sends_tab_pressed_without_shift() {
+        let message = tab_pressed_message(tab_key_press(keyboard::Modifiers::empty()));
+
+        assert_eq!(message, Some(Message::TabPressed { shift: false }));
+    }
+
+    #[test]
+    fn shift_tab_key_press_sends_tab_pressed_with_shift() {
+        let message = tab_pressed_message(tab_key_press(keyboard::Modifiers::SHIFT));
+
+        assert_eq!(message, Some(Message::TabPressed { shift: true }));
+    }
+
+    #[test]
+    fn other_key_presses_are_ignored() {
+        let event = keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(keyboard::key::Named::Enter),
+            modified_key: keyboard::Key::Named(keyboard::key::Named::Enter),
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Enter),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::empty(),
+            text: None,
+            repeat: false,
+        };
+
+        assert_eq!(tab_pressed_message(event), None);
     }
 }
