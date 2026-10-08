@@ -23,13 +23,16 @@ pub enum Message {
     AddFolderPressed,
     FolderPicked(Option<PathBuf>),
     LibraryCreated(Result<LibraryModel, String>),
-    BrowsePressed(String),
+    BrowseRemoteLibrary(String),
+    BrowseLibrary(String),
 }
 
 #[derive(Debug)]
 pub enum Action {
     None,
     Run(Task<Message>),
+    BrowseRemoteLibrary(String),
+    BrowseLibrary(String),
 }
 
 impl Library {
@@ -84,7 +87,8 @@ impl Library {
             )),
             Message::LibraryCreated(Err(_)) => Action::None,
 
-            Message::BrowsePressed(_) => Action::None,
+            Message::BrowseRemoteLibrary(external_id) => Action::BrowseRemoteLibrary(external_id),
+            Message::BrowseLibrary(library_id) => Action::BrowseLibrary(library_id),
         }
     }
 
@@ -171,7 +175,7 @@ mod view_helper {
                         .spacing(6)
                         .align_y(Center)
                 )
-                .on_press(super::Message::BrowsePressed(library.id.clone()))
+                .on_press(browse_message(library))
             ]
             .spacing(12)
             .align_y(Center)
@@ -189,6 +193,13 @@ mod view_helper {
             ..container::Style::default()
         })
         .into()
+    }
+
+    fn browse_message(library: &Library) -> super::Message {
+        match &library.external_id {
+            Some(external_id) => super::Message::BrowseRemoteLibrary(external_id.clone()),
+            None => super::Message::BrowseLibrary(library.id.clone()),
+        }
     }
 
     fn icon_badge<'a>(icon: &'static [u8]) -> Element<'a, super::Message> {
@@ -294,6 +305,13 @@ mod tests {
     fn library_model_with_integration(name: &str, integration_id: &str) -> LibraryModel {
         LibraryModel {
             integration_id: Some(integration_id.to_string()),
+            ..library_model(name)
+        }
+    }
+
+    fn library_model_with_remote_id(name: &str, external_id: &str) -> LibraryModel {
+        LibraryModel {
+            external_id: Some(external_id.to_string()),
             ..library_model(name)
         }
     }
@@ -502,11 +520,56 @@ mod tests {
     }
 
     #[test]
-    fn update_browse_pressed_returns_no_action() {
+    fn update_browse_remote_library_returns_browse_remote_library_action() {
         let mut library = Library::default();
 
-        let action = library.update(Message::BrowsePressed("id".to_string()));
+        let action = library.update(Message::BrowseRemoteLibrary("external-id".to_string()));
 
-        assert!(matches!(action, Action::None));
+        assert!(matches!(action, Action::BrowseRemoteLibrary(id) if id == "external-id"));
+    }
+
+    #[test]
+    fn update_browse_library_returns_browse_library_action() {
+        let mut library = Library::default();
+
+        let action = library.update(Message::BrowseLibrary("library-id".to_string()));
+
+        assert!(matches!(action, Action::BrowseLibrary(id) if id == "library-id"));
+    }
+
+    #[test]
+    fn clicking_browse_on_a_remote_library_sends_browse_remote_library_message() {
+        let library = Library {
+            items: AsyncModel::Loaded(vec![library_model_with_remote_id(
+                "My Library",
+                "external-id",
+            )]),
+            integrations: AsyncModel::Loaded(vec![]),
+        };
+
+        let mut ui = simulator(library.view());
+        let _ = ui.click("Browse").expect("Browse button should be found");
+
+        let messages: Vec<_> = ui.into_messages().collect();
+
+        assert_eq!(
+            messages,
+            vec![Message::BrowseRemoteLibrary("external-id".to_string())]
+        );
+    }
+
+    #[test]
+    fn clicking_browse_on_a_local_library_sends_browse_library_message() {
+        let library = Library {
+            items: AsyncModel::Loaded(vec![library_model("My Library")]),
+            integrations: AsyncModel::Loaded(vec![]),
+        };
+
+        let mut ui = simulator(library.view());
+        let _ = ui.click("Browse").expect("Browse button should be found");
+
+        let messages: Vec<_> = ui.into_messages().collect();
+
+        assert_eq!(messages, vec![Message::BrowseLibrary("id".to_string())]);
     }
 }

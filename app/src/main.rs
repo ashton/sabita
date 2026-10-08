@@ -12,7 +12,7 @@ mod screen;
 
 use crate::{
     menu::{Menu, MenuItem},
-    screen::{Home, home, integration, library, settings},
+    screen::{Home, browse, home, integration, library, settings},
 };
 use iced::{
     Element,
@@ -35,6 +35,7 @@ enum Message {
     Settings(settings::Message),
     Home(home::Message),
     Library(library::Message),
+    Browse(browse::Message),
     Integrations(integration::Message),
 }
 
@@ -103,6 +104,23 @@ impl SabitaApp {
                 match library.update(msg) {
                     library::Action::None => Task::none(),
                     library::Action::Run(task) => task.map(Message::Library),
+                    library::Action::BrowseRemoteLibrary(external_id) => {
+                        self.open_browse_remote(external_id)
+                    }
+                    library::Action::BrowseLibrary(library_id) => {
+                        self.open_browse_local(library_id)
+                    }
+                }
+            }
+
+            Message::Browse(msg) => {
+                let Screen::Browse(browse) = &mut self.screen else {
+                    return Task::none();
+                };
+
+                match browse.update(msg) {
+                    browse::Action::None => Task::none(),
+                    browse::Action::BackPressed => self.open_library(),
                 }
             }
 
@@ -161,6 +179,7 @@ impl SabitaApp {
         let screen = match &self.screen {
             Screen::Home(home) => home.view().map(Message::Home),
             Screen::Library(library) => library.view().map(Message::Library),
+            Screen::Browse(browse) => browse.view().map(Message::Browse),
             Screen::Settings(settings) => settings.view().map(Message::Settings),
             Screen::Integrations(integrations) => integrations.view().map(Message::Integrations),
         };
@@ -201,6 +220,20 @@ impl SabitaApp {
         self.menu.set_active(&Message::OpenLibrary);
 
         task.map(Message::Library)
+    }
+
+    fn open_browse_remote(&mut self, external_id: String) -> Task<Message> {
+        let (params, task) = screen::Browse::new_remote(external_id);
+        self.screen = Screen::Browse(params);
+
+        task.map(Message::Browse)
+    }
+
+    fn open_browse_local(&mut self, library_id: String) -> Task<Message> {
+        let (params, task) = screen::Browse::new_local(library_id);
+        self.screen = Screen::Browse(params);
+
+        task.map(Message::Browse)
     }
 
     fn open_integrations(&mut self) -> Task<Message> {
