@@ -99,7 +99,10 @@ mod view_helper {
     pub fn view<'a>(
         items: &'a AsyncModel<Vec<LibraryItem>, String>,
     ) -> Element<'a, super::Message> {
-        column![top_bar(), body(items)].into()
+        column![top_bar(), body(items)]
+            .width(Fill)
+            .height(Fill)
+            .into()
     }
 
     fn top_bar<'a>() -> Element<'a, super::Message> {
@@ -120,9 +123,15 @@ mod view_helper {
     fn items_grid<'a>(items: &'a [LibraryItem]) -> Element<'a, super::Message> {
         let cards = items.iter().map(item_card);
 
-        container(grid(cards).fluid(160.0).spacing(16.0).height(0.6))
-            .padding(20)
-            .into()
+        container(
+            grid(cards)
+                .fluid(160.0)
+                .spacing(16.0)
+                .height(grid::aspect_ratio(2.0, 3.0)),
+        )
+        .width(Fill)
+        .padding(20)
+        .into()
     }
 
     fn item_card<'a>(item: &'a LibraryItem) -> Element<'a, super::Message> {
@@ -131,6 +140,7 @@ mod view_helper {
             text(&item.name).size(13),
             pages_label(item.pages)
         ]
+        .width(Fill)
         .spacing(4)
         .align_x(Center)
         .into()
@@ -281,5 +291,21 @@ mod tests {
         let messages: Vec<_> = ui.into_messages().collect();
 
         assert_eq!(messages, vec![Message::BackPressed]);
+    }
+
+    #[test]
+    fn view_renders_items_with_a_visible_non_collapsed_size() {
+        let browse = Browse {
+            items: AsyncModel::Loaded(vec![library_item("One Piece", Some(42))]),
+        };
+
+        let mut ui = simulator(browse.view());
+        let bounds = ui
+            .find("One Piece")
+            .expect("item name should be found")
+            .visible_bounds()
+            .expect("item name should be visible");
+
+        assert!(bounds.height > 10.0, "height was {}", bounds.height);
     }
 }
