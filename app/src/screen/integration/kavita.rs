@@ -87,19 +87,15 @@ impl Kavita {
                         Message::ConnectionTested,
                     );
 
-                    if self.api_key.is_empty() {
-                        Action::Run(connection_task)
-                    } else {
-                        let authentication_task = Task::perform(
-                            crate::runtime::on_tokio(KavitaProvider::check_authentication(
-                                self.url.clone(),
-                                self.api_key.clone(),
-                            )),
-                            Message::AuthenticationTested,
-                        );
+                    let authentication_task = Task::perform(
+                        crate::runtime::on_tokio(KavitaProvider::check_authentication(
+                            self.url.clone(),
+                            self.api_key.clone(),
+                        )),
+                        Message::AuthenticationTested,
+                    );
 
-                        Action::Run(Task::batch([connection_task, authentication_task]))
-                    }
+                    Action::Run(Task::batch([connection_task, authentication_task]))
                 }
             }
 
@@ -117,6 +113,12 @@ impl Kavita {
 
     pub fn view<'a>(&'a self) -> Element<'a, Message> {
         view_helper::form(self)
+    }
+
+    fn has_errors(&self) -> bool {
+        self.url_invalid
+            || matches!(self.connection_test, Some(Err(_)))
+            || matches!(self.authentication_test, Some(Err(_)))
     }
 }
 
@@ -153,7 +155,8 @@ mod view_helper {
                 .align_y(Center),
                 row![
                     button("Back").on_press(Message::BackPressed),
-                    button("Save").on_press(Message::Submitted)
+                    button("Save")
+                        .on_press_maybe((!kavita.has_errors()).then_some(Message::Submitted))
                 ]
                 .spacing(10)
             ]
@@ -329,12 +332,14 @@ mod tests {
     }
 
     #[test]
-    fn update_test_connection_pressed_without_api_key_runs_only_the_connection_task() {
+    fn update_test_connection_pressed_without_api_key_still_checks_authentication() {
         let mut kavita = Kavita {
             url: "http://localhost:5000".to_string(),
             authentication_test: Some(Ok(())),
             ..Kavita::default()
         };
+
+        assert_eq!(kavita.api_key, "");
 
         let action = kavita.update(Message::TestConnectionPressed);
 
@@ -529,5 +534,58 @@ mod tests {
 
         assert!(matches!(action, Action::Run(_)));
         assert!(!kavita.url_invalid);
+    }
+
+    fn click_save(kavita: &Kavita) -> Vec<Message> {
+        let mut ui = simulator(kavita.view());
+        let _ = ui.click("Save").expect("Save button should be found");
+
+        ui.into_messages().collect()
+    }
+
+    #[test]
+    fn save_is_enabled_when_there_are_no_errors() {
+        let kavita = Kavita::default();
+
+        assert_eq!(click_save(&kavita), vec![Message::Submitted]);
+    }
+
+    #[test]
+    fn save_is_enabled_when_tests_passed() {
+        let kavita = Kavita {
+            connection_test: Some(Ok(())),
+            authentication_test: Some(Ok(())),
+            ..Kavita::default()
+        };
+
+        assert_eq!(click_save(&kavita), vec![Message::Submitted]);
+    }
+
+    #[test]
+    fn save_is_disabled_when_the_url_is_invalid() {
+        let mut kavita = Kavita::default();
+        let _ = kavita.update(Message::UrlChanged("not a url".to_string()));
+
+        assert_eq!(click_save(&kavita), Vec::<Message>::new());
+    }
+
+    #[test]
+    fn save_is_disabled_when_the_connection_test_failed() {
+        let kavita = Kavita {
+            connection_test: Some(Err("boom".to_string())),
+            ..Kavita::default()
+        };
+
+        assert_eq!(click_save(&kavita), Vec::<Message>::new());
+    }
+
+    #[test]
+    fn save_is_disabled_when_the_authentication_test_failed() {
+        let kavita = Kavita {
+            authentication_test: Some(Err("boom".to_string())),
+            ..Kavita::default()
+        };
+
+        assert_eq!(click_save(&kavita), Vec::<Message>::new());
     }
 }
