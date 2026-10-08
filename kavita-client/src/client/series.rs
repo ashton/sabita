@@ -120,7 +120,7 @@ mod tests {
         "hasUserRated": false,
         "totalReads": 0,
         "pagesRead": 0,
-        "latestReadDate": "00:00:00",
+        "latestReadDate": "2024-01-15T10:30:00",
         "format": 1,
         "libraryId": 1,
         "libraryName": "Comics",

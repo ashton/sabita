@@ -1,4 +1,4 @@
-use chrono::NaiveTime;
+use chrono::NaiveDateTime;
 use serde::Deserialize;
 use serde_repr::Deserialize_repr;
 
@@ -27,7 +27,7 @@ pub struct Series {
     pub has_user_rated: bool,
     pub total_reads: u16,
     pub pages_read: u16,
-    pub latest_read_date: NaiveTime,
+    pub latest_read_date: NaiveDateTime,
     pub format: SeriesFormat,
     pub library_id: u16,
     pub library_name: String,
