@@ -121,6 +121,7 @@ impl SabitaApp {
 
                 match browse.update(msg) {
                     browse::Action::None => Task::none(),
+                    browse::Action::Run(task) => task.map(Message::Browse),
                     browse::Action::BackPressed => self.open_library(),
                 }
             }
