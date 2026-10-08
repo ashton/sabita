@@ -1,6 +1,7 @@
 use iced::{Element, Task};
 
 use crate::models::integration::{Integration as IntegrationModel, IntegrationType};
+use crate::providers::kavita::provider::KavitaProvider;
 use crate::repository::integration as integration_repository;
 
 #[derive(Debug, Default)]
@@ -8,6 +9,7 @@ pub struct Kavita {
     name: String,
     url: String,
     api_key: String,
+    connection_test: Option<Result<(), String>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -18,6 +20,8 @@ pub enum Message {
     BackPressed,
     Submitted,
     Created(Result<IntegrationModel, String>),
+    TestConnectionPressed,
+    ConnectionTested(Result<(), String>),
 }
 
 #[derive(Debug)]
@@ -60,6 +64,19 @@ impl Kavita {
 
             Message::Created(Ok(integration)) => Action::Created(integration),
             Message::Created(Err(_)) => Action::None,
+
+            Message::TestConnectionPressed => {
+                self.connection_test = None;
+                Action::Run(Task::perform(
+                    KavitaProvider::ping(self.url.clone()),
+                    Message::ConnectionTested,
+                ))
+            }
+
+            Message::ConnectionTested(result) => {
+                self.connection_test = Some(result);
+                Action::None
+            }
         }
     }
 
@@ -71,8 +88,8 @@ impl Kavita {
 mod view_helper {
     use super::{Kavita, Message};
     use iced::{
-        Element,
-        widget::{button, column, container, row, text_input},
+        Center, Element,
+        widget::{button, column, container, row, text, text_input},
     };
 
     pub fn form<'a>(kavita: &'a Kavita) -> Element<'a, Message> {
@@ -82,6 +99,12 @@ mod view_helper {
                 text_input("Server URL", &kavita.url).on_input(Message::UrlChanged),
                 text_input("API Key", &kavita.api_key).on_input(Message::ApiKeyChanged),
                 row![
+                    button("Test Connection").on_press(Message::TestConnectionPressed),
+                    connection_toast(kavita),
+                ]
+                .spacing(10)
+                .align_y(Center),
+                row![
                     button("Back").on_press(Message::BackPressed),
                     button("Save").on_press(Message::Submitted)
                 ]
@@ -90,6 +113,14 @@ mod view_helper {
             .spacing(10),
         )
         .into()
+    }
+
+    fn connection_toast<'a>(kavita: &'a Kavita) -> Element<'a, Message> {
+        match &kavita.connection_test {
+            Some(Ok(())) => text("Connection successful").style(text::success).into(),
+            Some(Err(error)) => text(error).style(text::danger).into(),
+            None => row![].into(),
+        }
     }
 }
 
@@ -143,6 +174,7 @@ mod tests {
             name: "My Kavita".to_string(),
             url: "http://localhost:5000".to_string(),
             api_key: "api-key".to_string(),
+            connection_test: None,
         };
 
         let action = kavita.update(Message::Submitted);
@@ -166,5 +198,85 @@ mod tests {
         let action = kavita.update(Message::Created(Err("boom".to_string())));
 
         assert!(matches!(action, Action::None));
+    }
+
+    #[test]
+    fn view_renders_test_connection_button() {
+        let kavita = Kavita::default();
+
+        let mut ui = simulator(kavita.view());
+
+        assert!(ui.find("Test Connection").is_ok());
+    }
+
+    #[test]
+    fn clicking_test_connection_sends_test_connection_pressed_message() {
+        let kavita = Kavita::default();
+
+        let mut ui = simulator(kavita.view());
+        let _ = ui
+            .click("Test Connection")
+            .expect("Test Connection button should be found");
+
+        let messages: Vec<_> = ui.into_messages().collect();
+
+        assert_eq!(messages, vec![Message::TestConnectionPressed]);
+    }
+
+    #[test]
+    fn update_test_connection_pressed_clears_previous_result_and_runs_a_task() {
+        let mut kavita = Kavita {
+            connection_test: Some(Ok(())),
+            ..Kavita::default()
+        };
+
+        let action = kavita.update(Message::TestConnectionPressed);
+
+        assert!(matches!(action, Action::Run(_)));
+        assert_eq!(kavita.connection_test, None);
+    }
+
+    #[test]
+    fn update_connection_tested_ok_stores_success() {
+        let mut kavita = Kavita::default();
+
+        let action = kavita.update(Message::ConnectionTested(Ok(())));
+
+        assert!(matches!(action, Action::None));
+        assert_eq!(kavita.connection_test, Some(Ok(())));
+    }
+
+    #[test]
+    fn update_connection_tested_err_stores_error() {
+        let mut kavita = Kavita::default();
+
+        let action = kavita.update(Message::ConnectionTested(Err("boom".to_string())));
+
+        assert!(matches!(action, Action::None));
+        assert_eq!(kavita.connection_test, Some(Err("boom".to_string())));
+    }
+
+    #[test]
+    fn view_renders_success_message_after_successful_test() {
+        let kavita = Kavita {
+            connection_test: Some(Ok(())),
+            ..Kavita::default()
+        };
+
+        let mut ui = simulator(kavita.view());
+
+        assert!(ui.find("Connection successful").is_ok());
+    }
+
+    #[test]
+    fn view_renders_error_message_after_failed_test() {
+        let kavita = Kavita {
+            connection_test: Some(Err("connection refused".to_string())),
+            ..Kavita::default()
+        };
+
+        let mut ui = simulator(kavita.view());
+
+        assert!(ui.find("connection refused").is_ok());
     }
 }

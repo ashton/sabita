@@ -37,6 +37,13 @@ impl KavitaProvider {
         })
     }
 
+    /// Checks whether a Kavita server at `url` is reachable, without
+    /// requiring authentication.
+    pub async fn ping(url: String) -> Result<(), String> {
+        let client = KavitaClient::new(url, reqwest::Client::new());
+        client.health().await.map_err(|e| e.to_string())
+    }
+
     pub async fn list_libraries(&self) -> Result<Vec<Library>, String> {
         let libraries = self
             .client

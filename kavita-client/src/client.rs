@@ -2,6 +2,7 @@ use reqwest::Client;
 
 mod account;
 mod chapter;
+mod health;
 mod library;
 mod series;
 mod volume;
