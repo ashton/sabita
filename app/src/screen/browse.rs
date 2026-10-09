@@ -5,9 +5,9 @@ use crate::models::{AsyncModel, integration::IntegrationType, library_item::Libr
 use crate::providers::kavita::provider::KavitaProvider;
 use crate::repository::{integration as integration_repository, library as library_repository};
 
-/// Number of items fetched per page, and the unit eviction operates on: once
-/// the user has scrolled far enough past a page, its items are dropped from
-/// memory as a whole page rather than item-by-item.
+/// Number of items fetched per page, and the unit eviction operates on:
+/// pages are dropped from (or re-fetched back into) memory as a whole,
+/// rather than item-by-item.
 const PAGE_SIZE: u32 = 20;
 
 /// How close to the bottom of the scrollable (as a fraction of its scrollable
@@ -15,9 +15,12 @@ const PAGE_SIZE: u32 = 20;
 /// requested.
 const LOAD_NEXT_PAGE_THRESHOLD: f32 = 0.8;
 
-/// How many pages "behind" the current scroll position to keep loaded, in
-/// case the user scrolls back up. Pages older than this are evicted.
-const KEEP_PAGES_BEHIND: usize = 1;
+/// How many of the most recently loaded pages to keep fully populated in
+/// memory (4 pages * PAGE_SIZE = 80 items). Older pages are evicted, but
+/// only once this many pages have been loaded ahead of them — eviction
+/// tracks loading progress, not the live scroll position, so scrolling back
+/// up by a page or two never shows placeholders.
+const KEEP_PAGES_LOADED: usize = 4;
 
 /// Identifies the items scrollable so it can be measured after a page loads,
 /// to tell whether the loaded items actually overflow the viewport (see
@@ -115,14 +118,33 @@ impl Browse {
             }
 
             Message::NextPageLoaded(Ok(new_items)) => {
+                let mut last_loaded_page = None;
+
                 if let Some(pagination) = &mut self.pagination {
                     pagination.loading_next = false;
                     pagination.has_more = new_items.len() as u32 == pagination.page_size;
                     pagination.next_page += 1;
+                    last_loaded_page = Some((pagination.next_page as usize).saturating_sub(2));
                 }
 
                 if let AsyncModel::Loaded(items) = &mut self.items {
                     items.extend(new_items.into_iter().map(Some));
+
+                    // Forward loading only ever happens once the user has
+                    // scrolled near the bottom, so by the time a page this
+                    // far ahead loads, pages this far behind are safely
+                    // off-screen.
+                    if let Some(last_loaded_page) = last_loaded_page {
+                        let range = eviction_range(
+                            items.len(),
+                            PAGE_SIZE,
+                            last_loaded_page,
+                            KEEP_PAGES_LOADED,
+                        );
+                        for slot in &mut items[range] {
+                            *slot = None;
+                        }
+                    }
                 }
 
                 Action::Run(measure_items_scrollable())
@@ -139,28 +161,15 @@ impl Browse {
             Message::Scrolled(relative_offset_y) => {
                 let mut page_needing_refetch = None;
 
-                if let AsyncModel::Loaded(items) = &mut self.items {
-                    let total_items = items.len();
+                if let AsyncModel::Loaded(items) = &self.items
+                    && let Some(current_page) =
+                        current_page_index(items.len(), PAGE_SIZE, relative_offset_y)
+                {
+                    let start = current_page * PAGE_SIZE as usize;
+                    let end = (start + PAGE_SIZE as usize).min(items.len());
 
-                    let range = eviction_range(
-                        total_items,
-                        PAGE_SIZE,
-                        relative_offset_y,
-                        KEEP_PAGES_BEHIND,
-                    );
-                    for slot in &mut items[range] {
-                        *slot = None;
-                    }
-
-                    if let Some(current_page) =
-                        current_page_index(total_items, PAGE_SIZE, relative_offset_y)
-                    {
-                        let start = current_page * PAGE_SIZE as usize;
-                        let end = (start + PAGE_SIZE as usize).min(total_items);
-
-                        if items[start..end].iter().any(Option::is_none) {
-                            page_needing_refetch = Some(current_page);
-                        }
+                    if items[start..end].iter().any(Option::is_none) {
+                        page_needing_refetch = Some(current_page);
                     }
                 }
 
@@ -268,24 +277,16 @@ impl Browse {
     }
 }
 
-/// Returns the (flat, page-aligned) index range of items that are far enough
-/// above the current scroll position to be evicted from memory.
-///
-/// The current page is approximated from `relative_offset_y` (the
-/// scrollable's vertical offset as a fraction of its scrollable range)
-/// assuming pages contribute roughly equal height to the grid, since iced
-/// doesn't expose which individual items are actually on-screen.
+/// Returns the (flat, page-aligned) index range of items old enough to be
+/// evicted from memory: everything before the last `keep_pages_loaded`
+/// pages, relative to `last_loaded_page` (the most recently loaded page).
 fn eviction_range(
     total_items: usize,
     page_size: u32,
-    relative_offset_y: f32,
-    keep_pages_behind: usize,
+    last_loaded_page: usize,
+    keep_pages_loaded: usize,
 ) -> std::ops::Range<usize> {
-    let Some(current_page) = current_page_index(total_items, page_size, relative_offset_y) else {
-        return 0..0;
-    };
-
-    let evict_before_page = current_page.saturating_sub(keep_pages_behind);
+    let evict_before_page = last_loaded_page.saturating_sub(keep_pages_loaded.saturating_sub(1));
 
     0..(evict_before_page * page_size as usize).min(total_items)
 }
@@ -864,19 +865,25 @@ mod tests {
     }
 
     #[test]
-    fn scrolling_evicts_items_from_pages_scrolled_past() {
-        let items: Vec<_> = (0..(PAGE_SIZE * 3))
+    fn next_page_loaded_evicts_pages_outside_the_keep_window() {
+        // KEEP_PAGES_LOADED pages are already loaded (indices 0..KEEP_PAGES_LOADED);
+        // loading one more page should push page 0 out of the window.
+        let items: Vec<_> = (0..(PAGE_SIZE * KEEP_PAGES_LOADED as u32))
             .map(|i| Some(library_item(&format!("Item {i}"), None)))
             .collect();
 
+        let mut pagination_state = pagination(true, false);
+        pagination_state.next_page = KEEP_PAGES_LOADED as u32 + 1;
+
         let mut browse = Browse {
             items: AsyncModel::Loaded(items),
-            pagination: Some(pagination(false, false)),
+            pagination: Some(pagination_state),
         };
 
-        // Scrolled almost to the very bottom (page index 2 of 3): with
-        // KEEP_PAGES_BEHIND = 1, page 0 should be evicted but page 1 kept.
-        browse.update(Message::Scrolled(0.99));
+        let new_page: Vec<_> = (0..PAGE_SIZE)
+            .map(|i| library_item(&format!("New {i}"), None))
+            .collect();
+        browse.update(Message::NextPageLoaded(Ok(new_page)));
 
         let AsyncModel::Loaded(items) = &browse.items else {
             panic!("items should be loaded");
@@ -891,7 +898,30 @@ mod tests {
     }
 
     #[test]
-    fn scrolling_near_the_top_does_not_evict_anything() {
+    fn next_page_loaded_keeps_everything_within_the_keep_window() {
+        let items: Vec<_> = (0..PAGE_SIZE)
+            .map(|i| Some(library_item(&format!("Item {i}"), None)))
+            .collect();
+
+        let mut browse = Browse {
+            items: AsyncModel::Loaded(items),
+            pagination: Some(pagination(true, false)),
+        };
+
+        let new_page: Vec<_> = (0..PAGE_SIZE)
+            .map(|i| library_item(&format!("New {i}"), None))
+            .collect();
+        browse.update(Message::NextPageLoaded(Ok(new_page)));
+
+        let AsyncModel::Loaded(items) = &browse.items else {
+            panic!("items should be loaded");
+        };
+
+        assert!(items.iter().all(Option::is_some));
+    }
+
+    #[test]
+    fn scrolling_does_not_evict_anything_on_its_own() {
         let items: Vec<_> = (0..(PAGE_SIZE * 3))
             .map(|i| Some(library_item(&format!("Item {i}"), None)))
             .collect();
@@ -901,7 +931,7 @@ mod tests {
             pagination: Some(pagination(false, false)),
         };
 
-        browse.update(Message::Scrolled(0.05));
+        browse.update(Message::Scrolled(0.99));
 
         let AsyncModel::Loaded(items) = &browse.items else {
             panic!("items should be loaded");
@@ -912,23 +942,24 @@ mod tests {
 
     #[test]
     fn eviction_range_is_empty_for_an_empty_list() {
-        assert_eq!(eviction_range(0, PAGE_SIZE, 1.0, KEEP_PAGES_BEHIND), 0..0);
+        assert_eq!(eviction_range(0, PAGE_SIZE, 10, KEEP_PAGES_LOADED), 0..0);
     }
 
     #[test]
     fn scrolling_back_onto_an_evicted_page_refetches_it() {
-        let items: Vec<_> = (0..(PAGE_SIZE * 3))
+        let mut items: Vec<_> = (0..(PAGE_SIZE * 3))
             .map(|i| Some(library_item(&format!("Item {i}"), None)))
             .collect();
+        for slot in &mut items[0..PAGE_SIZE as usize] {
+            *slot = None;
+        }
 
         let mut browse = Browse {
             items: AsyncModel::Loaded(items),
             pagination: Some(pagination(false, false)),
         };
 
-        // Scroll to the bottom, evicting page 0.
-        browse.update(Message::Scrolled(0.99));
-        // Scroll back up onto the now-evicted page 0.
+        // Scroll back up onto the evicted page 0.
         let action = browse.update(Message::Scrolled(0.0));
 
         assert!(matches!(action, Action::Run(_)));
@@ -954,16 +985,18 @@ mod tests {
 
     #[test]
     fn scrolling_onto_an_evicted_page_already_being_refetched_does_not_request_again() {
-        let items: Vec<_> = (0..(PAGE_SIZE * 3))
+        let mut items: Vec<_> = (0..(PAGE_SIZE * 3))
             .map(|i| Some(library_item(&format!("Item {i}"), None)))
             .collect();
+        for slot in &mut items[0..PAGE_SIZE as usize] {
+            *slot = None;
+        }
 
         let mut browse = Browse {
             items: AsyncModel::Loaded(items),
             pagination: Some(pagination(false, false)),
         };
 
-        browse.update(Message::Scrolled(0.99));
         browse.update(Message::Scrolled(0.0));
         let action = browse.update(Message::Scrolled(0.01));
 
