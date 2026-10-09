@@ -37,12 +37,17 @@ struct Pagination {
     page_size: u32,
     has_more: bool,
     loading_next: bool,
+    /// 0-based page indices currently being re-fetched after eviction (see
+    /// `request_page_refetch`), keyed separately from `loading_next` since
+    /// several evicted pages can be scrolled through in quick succession.
+    refetching_pages: std::collections::HashSet<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Message {
     ItemsLoaded(Result<Vec<LibraryItem>, String>),
     NextPageLoaded(Result<Vec<LibraryItem>, String>),
+    PageRefetched(usize, Result<Vec<LibraryItem>, String>),
     Scrolled(f32),
     ContentOverflowChecked(bool),
     BackPressed,
@@ -66,6 +71,7 @@ impl Browse {
                     page_size: PAGE_SIZE,
                     has_more: true,
                     loading_next: false,
+                    refetching_pages: std::collections::HashSet::new(),
                 }),
             },
             Task::perform(
@@ -131,17 +137,37 @@ impl Browse {
             }
 
             Message::Scrolled(relative_offset_y) => {
+                let mut page_needing_refetch = None;
+
                 if let AsyncModel::Loaded(items) = &mut self.items {
+                    let total_items = items.len();
+
                     let range = eviction_range(
-                        items.len(),
+                        total_items,
                         PAGE_SIZE,
                         relative_offset_y,
                         KEEP_PAGES_BEHIND,
                     );
-
                     for slot in &mut items[range] {
                         *slot = None;
                     }
+
+                    if let Some(current_page) =
+                        current_page_index(total_items, PAGE_SIZE, relative_offset_y)
+                    {
+                        let start = current_page * PAGE_SIZE as usize;
+                        let end = (start + PAGE_SIZE as usize).min(total_items);
+
+                        if items[start..end].iter().any(Option::is_none) {
+                            page_needing_refetch = Some(current_page);
+                        }
+                    }
+                }
+
+                if let Some(page_index) = page_needing_refetch
+                    && let Some(action) = self.request_page_refetch(page_index)
+                {
+                    return action;
                 }
 
                 if !is_near_bottom(relative_offset_y, LOAD_NEXT_PAGE_THRESHOLD) {
@@ -149,6 +175,32 @@ impl Browse {
                 }
 
                 self.request_next_page().unwrap_or(Action::None)
+            }
+
+            Message::PageRefetched(page_index, Ok(refetched_items)) => {
+                if let Some(pagination) = &mut self.pagination {
+                    pagination.refetching_pages.remove(&page_index);
+                }
+
+                if let AsyncModel::Loaded(items) = &mut self.items {
+                    let start = page_index * PAGE_SIZE as usize;
+
+                    for (offset, item) in refetched_items.into_iter().enumerate() {
+                        if let Some(slot) = items.get_mut(start + offset) {
+                            *slot = Some(item);
+                        }
+                    }
+                }
+
+                Action::None
+            }
+
+            Message::PageRefetched(page_index, Err(_)) => {
+                if let Some(pagination) = &mut self.pagination {
+                    pagination.refetching_pages.remove(&page_index);
+                }
+
+                Action::None
             }
 
             // The items scrollable doesn't overflow its viewport, so a
@@ -193,6 +245,27 @@ impl Browse {
             Message::NextPageLoaded,
         )))
     }
+
+    /// Re-fetches a single (0-based) page that was previously evicted, if it
+    /// isn't already being re-fetched.
+    fn request_page_refetch(&mut self, page_index: usize) -> Option<Action> {
+        let pagination = self.pagination.as_mut()?;
+
+        if pagination.refetching_pages.contains(&page_index) {
+            return None;
+        }
+
+        pagination.refetching_pages.insert(page_index);
+
+        let external_id = pagination.external_id.clone();
+        let page_number = page_index as u32 + 1;
+        let page_size = pagination.page_size;
+
+        Some(Action::Run(Task::perform(
+            crate::runtime::on_tokio(fetch_remote_items_page(external_id, page_number, page_size)),
+            move |result| Message::PageRefetched(page_index, result),
+        )))
+    }
 }
 
 /// Returns the (flat, page-aligned) index range of items that are far enough
@@ -208,17 +281,29 @@ fn eviction_range(
     relative_offset_y: f32,
     keep_pages_behind: usize,
 ) -> std::ops::Range<usize> {
-    if total_items == 0 || page_size == 0 {
+    let Some(current_page) = current_page_index(total_items, page_size, relative_offset_y) else {
         return 0..0;
-    }
+    };
 
-    let page_size = page_size as usize;
-    let total_pages = total_items.div_ceil(page_size);
-    let relative_offset_y = relative_offset_y.clamp(0.0, 1.0);
-    let current_page = ((relative_offset_y * total_pages as f32) as usize).min(total_pages - 1);
     let evict_before_page = current_page.saturating_sub(keep_pages_behind);
 
-    0..(evict_before_page * page_size).min(total_items)
+    0..(evict_before_page * page_size as usize).min(total_items)
+}
+
+/// Approximates the (0-based) page the user is currently scrolled to, from
+/// `relative_offset_y` (the scrollable's vertical offset as a fraction of
+/// its scrollable range) assuming pages contribute roughly equal height to
+/// the grid, since iced doesn't expose which individual items are actually
+/// on-screen.
+fn current_page_index(total_items: usize, page_size: u32, relative_offset_y: f32) -> Option<usize> {
+    if total_items == 0 || page_size == 0 {
+        return None;
+    }
+
+    let total_pages = total_items.div_ceil(page_size as usize);
+    let relative_offset_y = relative_offset_y.clamp(0.0, 1.0);
+
+    Some(((relative_offset_y * total_pages as f32) as usize).min(total_pages - 1))
 }
 
 fn is_near_bottom(relative_offset_y: f32, threshold: f32) -> bool {
@@ -527,6 +612,7 @@ mod tests {
             page_size: PAGE_SIZE,
             has_more,
             loading_next,
+            refetching_pages: std::collections::HashSet::new(),
         }
     }
 
@@ -827,6 +913,117 @@ mod tests {
     #[test]
     fn eviction_range_is_empty_for_an_empty_list() {
         assert_eq!(eviction_range(0, PAGE_SIZE, 1.0, KEEP_PAGES_BEHIND), 0..0);
+    }
+
+    #[test]
+    fn scrolling_back_onto_an_evicted_page_refetches_it() {
+        let items: Vec<_> = (0..(PAGE_SIZE * 3))
+            .map(|i| Some(library_item(&format!("Item {i}"), None)))
+            .collect();
+
+        let mut browse = Browse {
+            items: AsyncModel::Loaded(items),
+            pagination: Some(pagination(false, false)),
+        };
+
+        // Scroll to the bottom, evicting page 0.
+        browse.update(Message::Scrolled(0.99));
+        // Scroll back up onto the now-evicted page 0.
+        let action = browse.update(Message::Scrolled(0.0));
+
+        assert!(matches!(action, Action::Run(_)));
+        assert!(browse.pagination.unwrap().refetching_pages.contains(&0));
+    }
+
+    #[test]
+    fn scrolling_onto_a_page_that_is_not_evicted_does_not_refetch() {
+        let items: Vec<_> = (0..(PAGE_SIZE * 3))
+            .map(|i| Some(library_item(&format!("Item {i}"), None)))
+            .collect();
+
+        let mut browse = Browse {
+            items: AsyncModel::Loaded(items),
+            pagination: Some(pagination(false, false)),
+        };
+
+        let action = browse.update(Message::Scrolled(0.0));
+
+        assert!(matches!(action, Action::None));
+        assert!(browse.pagination.unwrap().refetching_pages.is_empty());
+    }
+
+    #[test]
+    fn scrolling_onto_an_evicted_page_already_being_refetched_does_not_request_again() {
+        let items: Vec<_> = (0..(PAGE_SIZE * 3))
+            .map(|i| Some(library_item(&format!("Item {i}"), None)))
+            .collect();
+
+        let mut browse = Browse {
+            items: AsyncModel::Loaded(items),
+            pagination: Some(pagination(false, false)),
+        };
+
+        browse.update(Message::Scrolled(0.99));
+        browse.update(Message::Scrolled(0.0));
+        let action = browse.update(Message::Scrolled(0.01));
+
+        assert!(matches!(action, Action::None));
+    }
+
+    #[test]
+    fn page_refetched_ok_splices_items_back_at_the_right_position_and_clears_the_flag() {
+        let mut items: Vec<_> = (0..(PAGE_SIZE * 2))
+            .map(|i| Some(library_item(&format!("Item {i}"), None)))
+            .collect();
+        for slot in &mut items[0..PAGE_SIZE as usize] {
+            *slot = None;
+        }
+
+        let mut pagination_state = pagination(false, false);
+        pagination_state.refetching_pages.insert(0);
+
+        let mut browse = Browse {
+            items: AsyncModel::Loaded(items),
+            pagination: Some(pagination_state),
+        };
+
+        let refetched: Vec<_> = (0..PAGE_SIZE)
+            .map(|i| library_item(&format!("Refetched {i}"), None))
+            .collect();
+
+        let action = browse.update(Message::PageRefetched(0, Ok(refetched)));
+
+        assert!(matches!(action, Action::None));
+        assert!(!browse.pagination.unwrap().refetching_pages.contains(&0));
+
+        let AsyncModel::Loaded(items) = &browse.items else {
+            panic!("items should be loaded");
+        };
+        assert_eq!(items[0].as_ref().unwrap().name, "Refetched 0");
+        assert!(items[0..PAGE_SIZE as usize].iter().all(Option::is_some));
+        assert!(items[PAGE_SIZE as usize..].iter().all(|item| {
+            item.as_ref()
+                .is_some_and(|item| item.name.starts_with("Item"))
+        }));
+    }
+
+    #[test]
+    fn page_refetched_err_clears_the_flag_without_touching_items() {
+        let items = vec![None, Some(library_item("One Piece", None))];
+
+        let mut pagination_state = pagination(false, false);
+        pagination_state.refetching_pages.insert(0);
+
+        let mut browse = Browse {
+            items: AsyncModel::Loaded(items),
+            pagination: Some(pagination_state),
+        };
+
+        let action = browse.update(Message::PageRefetched(0, Err("boom".to_string())));
+
+        assert!(matches!(action, Action::None));
+        assert!(!browse.pagination.unwrap().refetching_pages.contains(&0));
+        assert!(matches!(browse.items, AsyncModel::Loaded(ref items) if items[0].is_none()));
     }
 
     #[test]
