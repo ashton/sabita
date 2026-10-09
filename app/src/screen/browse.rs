@@ -51,9 +51,27 @@ pub enum Message {
     ItemsLoaded(Result<Vec<LibraryItem>, String>),
     NextPageLoaded(Result<Vec<LibraryItem>, String>),
     PageRefetched(usize, Result<Vec<LibraryItem>, String>),
-    Scrolled(f32),
+    Scrolled(ScrollMetrics),
     ContentOverflowChecked(bool),
     BackPressed,
+}
+
+/// The scroll state needed to tell which pages are actually on-screen.
+///
+/// `relative_offset_y` (0.0 = top, 1.0 = bottom) is only valid as a measure
+/// of *scroll-track* position, i.e. "how close to the bottom", because it's
+/// normalized against the scrollable *range* (`content_height -
+/// viewport_height`), not the content height itself. Using it to guess which
+/// page is visible silently breaks whenever the viewport is a non-trivial
+/// fraction of the content's height (which it always is here, since only
+/// `KEEP_PAGES_LOADED` pages are ever kept intact) — so page visibility is
+/// computed separately below from the absolute pixel offset instead.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScrollMetrics {
+    relative_offset_y: f32,
+    absolute_offset_y: f32,
+    viewport_height: f32,
+    content_height: f32,
 }
 
 #[derive(Debug)]
@@ -141,6 +159,11 @@ impl Browse {
                             last_loaded_page,
                             KEEP_PAGES_LOADED,
                         );
+                        if !range.is_empty() {
+                            tracing::debug!(
+                                "evicting pages for items[{range:?}] (last_loaded_page={last_loaded_page}, keep={KEEP_PAGES_LOADED})"
+                            );
+                        }
                         for slot in &mut items[range] {
                             *slot = None;
                         }
@@ -158,28 +181,38 @@ impl Browse {
                 Action::None
             }
 
-            Message::Scrolled(relative_offset_y) => {
-                let mut page_needing_refetch = None;
+            Message::Scrolled(metrics) => {
+                let mut pages_needing_refetch = Vec::new();
 
                 if let AsyncModel::Loaded(items) = &self.items
-                    && let Some(current_page) =
-                        current_page_index(items.len(), PAGE_SIZE, relative_offset_y)
+                    && let Some(visible_pages) = visible_page_range(
+                        items.len(),
+                        PAGE_SIZE,
+                        metrics.absolute_offset_y,
+                        metrics.viewport_height,
+                        metrics.content_height,
+                    )
                 {
-                    let start = current_page * PAGE_SIZE as usize;
-                    let end = (start + PAGE_SIZE as usize).min(items.len());
+                    for page_index in visible_pages {
+                        let start = page_index * PAGE_SIZE as usize;
+                        let end = (start + PAGE_SIZE as usize).min(items.len());
 
-                    if items[start..end].iter().any(Option::is_none) {
-                        page_needing_refetch = Some(current_page);
+                        if items[start..end].iter().any(Option::is_none) {
+                            pages_needing_refetch.push(page_index);
+                        }
                     }
                 }
 
-                if let Some(page_index) = page_needing_refetch
-                    && let Some(action) = self.request_page_refetch(page_index)
-                {
-                    return action;
+                let refetch_tasks: Vec<_> = pages_needing_refetch
+                    .into_iter()
+                    .filter_map(|page_index| self.request_page_refetch(page_index))
+                    .collect();
+
+                if !refetch_tasks.is_empty() {
+                    return Action::Run(Task::batch(refetch_tasks));
                 }
 
-                if !is_near_bottom(relative_offset_y, LOAD_NEXT_PAGE_THRESHOLD) {
+                if !is_near_bottom(metrics.relative_offset_y, LOAD_NEXT_PAGE_THRESHOLD) {
                     return Action::None;
                 }
 
@@ -190,6 +223,12 @@ impl Browse {
                 if let Some(pagination) = &mut self.pagination {
                     pagination.refetching_pages.remove(&page_index);
                 }
+
+                tracing::debug!(
+                    "re-fetched page {} with {} item(s)",
+                    page_index + 1,
+                    refetched_items.len()
+                );
 
                 if let AsyncModel::Loaded(items) = &mut self.items {
                     let start = page_index * PAGE_SIZE as usize;
@@ -204,10 +243,12 @@ impl Browse {
                 Action::None
             }
 
-            Message::PageRefetched(page_index, Err(_)) => {
+            Message::PageRefetched(page_index, Err(error)) => {
                 if let Some(pagination) = &mut self.pagination {
                     pagination.refetching_pages.remove(&page_index);
                 }
+
+                tracing::debug!("re-fetching page {} failed: {error}", page_index + 1);
 
                 Action::None
             }
@@ -256,8 +297,10 @@ impl Browse {
     }
 
     /// Re-fetches a single (0-based) page that was previously evicted, if it
-    /// isn't already being re-fetched.
-    fn request_page_refetch(&mut self, page_index: usize) -> Option<Action> {
+    /// isn't already being re-fetched. Returns a bare `Task` (rather than an
+    /// `Action`) so callers can request several pages at once and combine
+    /// them with `Task::batch`.
+    fn request_page_refetch(&mut self, page_index: usize) -> Option<Task<Message>> {
         let pagination = self.pagination.as_mut()?;
 
         if pagination.refetching_pages.contains(&page_index) {
@@ -265,15 +308,19 @@ impl Browse {
         }
 
         pagination.refetching_pages.insert(page_index);
+        tracing::debug!(
+            "re-fetching evicted page {} (0-based index {page_index})",
+            page_index + 1
+        );
 
         let external_id = pagination.external_id.clone();
         let page_number = page_index as u32 + 1;
         let page_size = pagination.page_size;
 
-        Some(Action::Run(Task::perform(
+        Some(Task::perform(
             crate::runtime::on_tokio(fetch_remote_items_page(external_id, page_number, page_size)),
             move |result| Message::PageRefetched(page_index, result),
-        )))
+        ))
     }
 }
 
@@ -291,20 +338,40 @@ fn eviction_range(
     0..(evict_before_page * page_size as usize).min(total_items)
 }
 
-/// Approximates the (0-based) page the user is currently scrolled to, from
-/// `relative_offset_y` (the scrollable's vertical offset as a fraction of
-/// its scrollable range) assuming pages contribute roughly equal height to
-/// the grid, since iced doesn't expose which individual items are actually
-/// on-screen.
-fn current_page_index(total_items: usize, page_size: u32, relative_offset_y: f32) -> Option<usize> {
-    if total_items == 0 || page_size == 0 {
+/// Returns the inclusive range of (0-based) pages currently visible within
+/// the scrollable's viewport, from the *absolute* pixel scroll offset,
+/// viewport height and content height (all taken straight from iced's
+/// `Viewport`), assuming pages contribute roughly equal height to the grid
+/// since iced doesn't expose which individual items are actually on-screen.
+///
+/// Deliberately doesn't use `relative_offset`, which is normalized against
+/// the scrollable *range* (`content_height - viewport_height`) rather than
+/// the content height itself — using it here would misidentify the visible
+/// page by an amount proportional to how much of the content the viewport
+/// covers.
+fn visible_page_range(
+    total_items: usize,
+    page_size: u32,
+    absolute_offset_y: f32,
+    viewport_height: f32,
+    content_height: f32,
+) -> Option<std::ops::RangeInclusive<usize>> {
+    if total_items == 0 || page_size == 0 || content_height <= 0.0 {
         return None;
     }
 
     let total_pages = total_items.div_ceil(page_size as usize);
-    let relative_offset_y = relative_offset_y.clamp(0.0, 1.0);
+    let page_height = content_height / total_pages as f32;
 
-    Some(((relative_offset_y * total_pages as f32) as usize).min(total_pages - 1))
+    if page_height <= 0.0 {
+        return None;
+    }
+
+    let top_page = (absolute_offset_y.max(0.0) / page_height) as usize;
+    let bottom_page =
+        ((absolute_offset_y.max(0.0) + viewport_height.max(0.0)) / page_height) as usize;
+
+    Some(top_page.min(total_pages - 1)..=bottom_page.min(total_pages - 1))
 }
 
 fn is_near_bottom(relative_offset_y: f32, threshold: f32) -> bool {
@@ -513,7 +580,14 @@ mod view_helper {
             .id(iced::advanced::widget::Id::new(super::ITEMS_SCROLLABLE_ID))
             .width(Fill)
             .height(Fill)
-            .on_scroll(|viewport| super::Message::Scrolled(viewport.relative_offset().y))
+            .on_scroll(|viewport| {
+                super::Message::Scrolled(super::ScrollMetrics {
+                    relative_offset_y: viewport.relative_offset().y,
+                    absolute_offset_y: viewport.absolute_offset().y,
+                    viewport_height: viewport.bounds().height,
+                    content_height: viewport.content_bounds().height,
+                })
+            })
             .into()
     }
 
@@ -617,6 +691,39 @@ mod tests {
         }
     }
 
+    /// Scroll metrics for a given scroll-track position, placing the
+    /// "visible" page at page 0. Only `relative_offset_y` matters for tests
+    /// that exercise the near-bottom (forward prefetch) check.
+    fn scroll_metrics(relative_offset_y: f32) -> ScrollMetrics {
+        ScrollMetrics {
+            relative_offset_y,
+            absolute_offset_y: 0.0,
+            viewport_height: 0.0,
+            content_height: 100.0,
+        }
+    }
+
+    /// Scroll metrics that place exactly `page_index` at the top of a
+    /// viewport tall enough to show only that one page, given `total_items`
+    /// loaded so far. Used by tests that need precise control over which
+    /// page is considered "visible".
+    fn scroll_metrics_at_page(total_items: usize, page_index: usize) -> ScrollMetrics {
+        const PAGE_HEIGHT: f32 = 100.0;
+
+        let total_pages = (total_items as u32).div_ceil(PAGE_SIZE).max(1) as f32;
+        let content_height = total_pages * PAGE_HEIGHT;
+        let viewport_height = PAGE_HEIGHT / 2.0;
+        let absolute_offset_y = page_index as f32 * PAGE_HEIGHT;
+        let scrollable_range = (content_height - viewport_height).max(1.0);
+
+        ScrollMetrics {
+            relative_offset_y: (absolute_offset_y / scrollable_range).clamp(0.0, 1.0),
+            absolute_offset_y,
+            viewport_height,
+            content_height,
+        }
+    }
+
     #[test]
     fn new_local_loads_an_empty_list_without_a_task() {
         let (browse, _task) = Browse::new_local("library-id".to_string());
@@ -717,7 +824,7 @@ mod tests {
             pagination: Some(pagination(true, false)),
         };
 
-        let action = browse.update(Message::Scrolled(0.9));
+        let action = browse.update(Message::Scrolled(scroll_metrics(0.9)));
 
         assert!(matches!(action, Action::Run(_)));
         assert!(browse.pagination.unwrap().loading_next);
@@ -734,7 +841,7 @@ mod tests {
             pagination: Some(pagination(true, false)),
         };
 
-        let action = browse.update(Message::Scrolled(0.3));
+        let action = browse.update(Message::Scrolled(scroll_metrics(0.3)));
 
         assert!(matches!(action, Action::None));
         assert!(!browse.pagination.unwrap().loading_next);
@@ -747,7 +854,7 @@ mod tests {
             pagination: Some(pagination(true, true)),
         };
 
-        let action = browse.update(Message::Scrolled(0.95));
+        let action = browse.update(Message::Scrolled(scroll_metrics(0.95)));
 
         assert!(matches!(action, Action::None));
     }
@@ -759,7 +866,7 @@ mod tests {
             pagination: Some(pagination(false, false)),
         };
 
-        let action = browse.update(Message::Scrolled(0.95));
+        let action = browse.update(Message::Scrolled(scroll_metrics(0.95)));
 
         assert!(matches!(action, Action::None));
     }
@@ -931,7 +1038,7 @@ mod tests {
             pagination: Some(pagination(false, false)),
         };
 
-        browse.update(Message::Scrolled(0.99));
+        browse.update(Message::Scrolled(scroll_metrics(0.99)));
 
         let AsyncModel::Loaded(items) = &browse.items else {
             panic!("items should be loaded");
@@ -943,6 +1050,36 @@ mod tests {
     #[test]
     fn eviction_range_is_empty_for_an_empty_list() {
         assert_eq!(eviction_range(0, PAGE_SIZE, 10, KEEP_PAGES_LOADED), 0..0);
+    }
+
+    #[test]
+    fn visible_page_range_is_none_for_an_empty_list() {
+        assert_eq!(visible_page_range(0, PAGE_SIZE, 0.0, 100.0, 100.0), None);
+    }
+
+    #[test]
+    fn visible_page_range_uses_absolute_offset_not_the_scroll_track_fraction() {
+        // 10 pages of content, each 100px tall (content_height = 1000), with
+        // a viewport that's 40% of that (400px) — a large enough fraction
+        // that relative_offset_y (normalized against content_height -
+        // viewport_height = 600) diverges sharply from the absolute pixel
+        // position. Scrolled so the viewport's top sits at page 5 (y=500).
+        let range =
+            visible_page_range(PAGE_SIZE as usize * 10, PAGE_SIZE, 500.0, 400.0, 1000.0).unwrap();
+
+        // The naive (buggy) relative-offset formula would have computed
+        // relative_offset_y = 500.0 / 600.0 ≈ 0.833, then
+        // (0.833 * 10 pages) = page 8 — three pages off from the truth.
+        assert_eq!(*range.start(), 5);
+        assert_eq!(*range.end(), 9);
+    }
+
+    #[test]
+    fn visible_page_range_clamps_to_the_last_page() {
+        let range =
+            visible_page_range(PAGE_SIZE as usize * 3, PAGE_SIZE, 10_000.0, 50.0, 300.0).unwrap();
+
+        assert_eq!(range, 2..=2);
     }
 
     #[test]
@@ -960,7 +1097,7 @@ mod tests {
         };
 
         // Scroll back up onto the evicted page 0.
-        let action = browse.update(Message::Scrolled(0.0));
+        let action = browse.update(Message::Scrolled(scroll_metrics_at_page(60, 0)));
 
         assert!(matches!(action, Action::Run(_)));
         assert!(browse.pagination.unwrap().refetching_pages.contains(&0));
@@ -977,7 +1114,7 @@ mod tests {
             pagination: Some(pagination(false, false)),
         };
 
-        let action = browse.update(Message::Scrolled(0.0));
+        let action = browse.update(Message::Scrolled(scroll_metrics_at_page(60, 0)));
 
         assert!(matches!(action, Action::None));
         assert!(browse.pagination.unwrap().refetching_pages.is_empty());
@@ -997,10 +1134,39 @@ mod tests {
             pagination: Some(pagination(false, false)),
         };
 
-        browse.update(Message::Scrolled(0.0));
-        let action = browse.update(Message::Scrolled(0.01));
+        browse.update(Message::Scrolled(scroll_metrics_at_page(60, 0)));
+        let action = browse.update(Message::Scrolled(scroll_metrics_at_page(60, 0)));
 
         assert!(matches!(action, Action::None));
+    }
+
+    #[test]
+    fn scrolling_with_multiple_evicted_pages_visible_refetches_all_of_them() {
+        let mut items: Vec<_> = (0..(PAGE_SIZE * 3))
+            .map(|i| Some(library_item(&format!("Item {i}"), None)))
+            .collect();
+        for slot in &mut items[0..(PAGE_SIZE as usize * 2)] {
+            *slot = None;
+        }
+
+        let mut browse = Browse {
+            items: AsyncModel::Loaded(items),
+            pagination: Some(pagination(false, false)),
+        };
+
+        // A tall viewport spanning pages 0 and 1 at once, both evicted.
+        let metrics = ScrollMetrics {
+            relative_offset_y: 0.0,
+            absolute_offset_y: 0.0,
+            viewport_height: 150.0,
+            content_height: 300.0,
+        };
+        let action = browse.update(Message::Scrolled(metrics));
+
+        assert!(matches!(action, Action::Run(_)));
+        let pagination = browse.pagination.unwrap();
+        assert!(pagination.refetching_pages.contains(&0));
+        assert!(pagination.refetching_pages.contains(&1));
     }
 
     #[test]
@@ -1152,9 +1318,10 @@ mod tests {
         let messages: Vec<_> = ui.into_messages().collect();
 
         assert!(
-            messages.iter().any(
-                |message| matches!(message, Message::Scrolled(y) if *y >= LOAD_NEXT_PAGE_THRESHOLD)
-            ),
+            messages.iter().any(|message| matches!(
+                message,
+                Message::Scrolled(metrics) if metrics.relative_offset_y >= LOAD_NEXT_PAGE_THRESHOLD
+            )),
             "expected a Scrolled message near the bottom, got {messages:?}"
         );
     }
