@@ -1,3 +1,4 @@
+use iced::advanced::widget::Id as WidgetId;
 use iced::{Element, Task};
 
 use crate::models::{AsyncModel, integration::IntegrationType, library_item::LibraryItem};
@@ -17,6 +18,11 @@ const LOAD_NEXT_PAGE_THRESHOLD: f32 = 0.8;
 /// How many pages "behind" the current scroll position to keep loaded, in
 /// case the user scrolls back up. Pages older than this are evicted.
 const KEEP_PAGES_BEHIND: usize = 1;
+
+/// Identifies the items scrollable so it can be measured after a page loads,
+/// to tell whether the loaded items actually overflow the viewport (see
+/// [`measure_items_scrollable`]).
+const ITEMS_SCROLLABLE_ID: &str = "browse-items";
 
 #[derive(Debug)]
 pub struct Browse {
@@ -38,6 +44,7 @@ pub enum Message {
     ItemsLoaded(Result<Vec<LibraryItem>, String>),
     NextPageLoaded(Result<Vec<LibraryItem>, String>),
     Scrolled(f32),
+    ContentOverflowChecked(bool),
     BackPressed,
 }
 
@@ -91,8 +98,14 @@ impl Browse {
                     items.into_iter().map(Some).collect::<Vec<_>>()
                 });
 
+                let loaded = result.is_ok();
                 self.items = result.into();
-                Action::None
+
+                if loaded {
+                    Action::Run(measure_items_scrollable())
+                } else {
+                    Action::None
+                }
             }
 
             Message::NextPageLoaded(Ok(new_items)) => {
@@ -106,7 +119,7 @@ impl Browse {
                     items.extend(new_items.into_iter().map(Some));
                 }
 
-                Action::None
+                Action::Run(measure_items_scrollable())
             }
 
             Message::NextPageLoaded(Err(_)) => {
@@ -131,33 +144,25 @@ impl Browse {
                     }
                 }
 
-                let Some(pagination) = &mut self.pagination else {
-                    return Action::None;
-                };
-
-                if !should_load_next_page(
-                    relative_offset_y,
-                    pagination.has_more,
-                    pagination.loading_next,
-                    LOAD_NEXT_PAGE_THRESHOLD,
-                ) {
+                if !is_near_bottom(relative_offset_y, LOAD_NEXT_PAGE_THRESHOLD) {
                     return Action::None;
                 }
 
-                pagination.loading_next = true;
+                self.request_next_page().unwrap_or(Action::None)
+            }
 
-                let external_id = pagination.external_id.clone();
-                let page_number = pagination.next_page;
-                let page_size = pagination.page_size;
+            // The items scrollable doesn't overflow its viewport, so a
+            // scroll gesture can never happen on its own: eagerly request
+            // another page, as if the user had scrolled to the bottom. This
+            // repeats (via the Action::Run chain from NextPageLoaded) until
+            // either enough items are loaded to overflow the viewport, or
+            // the library is exhausted.
+            Message::ContentOverflowChecked(overflows) => {
+                if overflows {
+                    return Action::None;
+                }
 
-                Action::Run(Task::perform(
-                    crate::runtime::on_tokio(fetch_remote_items_page(
-                        external_id,
-                        page_number,
-                        page_size,
-                    )),
-                    Message::NextPageLoaded,
-                ))
+                self.request_next_page().unwrap_or(Action::None)
             }
 
             Message::BackPressed => Action::BackPressed,
@@ -166,6 +171,27 @@ impl Browse {
 
     pub fn view<'a>(&'a self) -> Element<'a, Message> {
         view_helper::view(&self.items)
+    }
+
+    /// Requests the next page, if pagination is set up for it, there isn't
+    /// already a request in flight, and there's more to fetch.
+    fn request_next_page(&mut self) -> Option<Action> {
+        let pagination = self.pagination.as_mut()?;
+
+        if pagination.loading_next || !pagination.has_more {
+            return None;
+        }
+
+        pagination.loading_next = true;
+
+        let external_id = pagination.external_id.clone();
+        let page_number = pagination.next_page;
+        let page_size = pagination.page_size;
+
+        Some(Action::Run(Task::perform(
+            crate::runtime::on_tokio(fetch_remote_items_page(external_id, page_number, page_size)),
+            Message::NextPageLoaded,
+        )))
     }
 }
 
@@ -195,13 +221,140 @@ fn eviction_range(
     0..(evict_before_page * page_size).min(total_items)
 }
 
-fn should_load_next_page(
-    relative_offset_y: f32,
-    has_more: bool,
-    loading_next: bool,
-    threshold: f32,
-) -> bool {
-    has_more && !loading_next && relative_offset_y >= threshold
+fn is_near_bottom(relative_offset_y: f32, threshold: f32) -> bool {
+    relative_offset_y >= threshold
+}
+
+/// Builds a task that measures the items scrollable's viewport against its
+/// content and reports whether the content overflows it (i.e. whether
+/// there's anything to scroll at all).
+fn measure_items_scrollable() -> Task<Message> {
+    iced::advanced::widget::operate(viewport_probe::overflow_probe(WidgetId::new(
+        ITEMS_SCROLLABLE_ID,
+    )))
+    .map(Message::ContentOverflowChecked)
+}
+
+/// A widget [`Operation`](iced::advanced::widget::Operation) that finds a
+/// scrollable by [`Id`](WidgetId) and reports whether its content overflows
+/// its viewport, without needing to track viewport state across updates.
+mod viewport_probe {
+    use iced::Rectangle;
+    use iced::advanced::widget::operation::{Outcome, Scrollable};
+    use iced::advanced::widget::{Id, Operation};
+
+    struct OverflowProbe {
+        target: Id,
+        overflows: Option<bool>,
+    }
+
+    impl Operation<bool> for OverflowProbe {
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<bool>)) {
+            operate(self);
+        }
+
+        fn scrollable(
+            &mut self,
+            id: Option<&Id>,
+            bounds: Rectangle,
+            content_bounds: Rectangle,
+            _translation: iced::Vector,
+            _state: &mut dyn Scrollable,
+        ) {
+            if Some(&self.target) == id {
+                self.overflows = Some(content_bounds.height > bounds.height);
+            }
+        }
+
+        fn finish(&self) -> Outcome<bool> {
+            match self.overflows {
+                Some(overflows) => Outcome::Some(overflows),
+                None => Outcome::None,
+            }
+        }
+    }
+
+    pub fn overflow_probe(target: Id) -> impl Operation<bool> {
+        OverflowProbe {
+            target,
+            overflows: None,
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use iced::Size;
+        use iced::advanced::widget::operation::scrollable::{AbsoluteOffset, RelativeOffset};
+
+        use super::*;
+
+        struct NoopScrollableState;
+
+        impl Scrollable for NoopScrollableState {
+            fn snap_to(&mut self, _offset: RelativeOffset<Option<f32>>) {}
+            fn scroll_to(&mut self, _offset: AbsoluteOffset<Option<f32>>) {}
+            fn scroll_by(
+                &mut self,
+                _offset: AbsoluteOffset,
+                _bounds: Rectangle,
+                _content_bounds: Rectangle,
+            ) {
+            }
+        }
+
+        fn rectangle(height: f32) -> Rectangle {
+            Rectangle::new(iced::Point::ORIGIN, Size::new(100.0, height))
+        }
+
+        #[test]
+        fn reports_overflow_when_content_is_taller_than_the_viewport() {
+            let target = Id::new("items");
+            let mut probe = overflow_probe(target.clone());
+
+            probe.scrollable(
+                Some(&target),
+                rectangle(400.0),
+                rectangle(1200.0),
+                iced::Vector::default(),
+                &mut NoopScrollableState,
+            );
+
+            assert!(matches!(probe.finish(), Outcome::Some(true)));
+        }
+
+        #[test]
+        fn reports_no_overflow_when_content_fits_the_viewport() {
+            let target = Id::new("items");
+            let mut probe = overflow_probe(target.clone());
+
+            probe.scrollable(
+                Some(&target),
+                rectangle(800.0),
+                rectangle(400.0),
+                iced::Vector::default(),
+                &mut NoopScrollableState,
+            );
+
+            assert!(matches!(probe.finish(), Outcome::Some(false)));
+        }
+
+        #[test]
+        fn ignores_scrollables_with_a_different_id() {
+            let target = Id::new("items");
+            let other = Id::new("something-else");
+            let mut probe = overflow_probe(target);
+
+            probe.scrollable(
+                Some(&other),
+                rectangle(400.0),
+                rectangle(1200.0),
+                iced::Vector::default(),
+                &mut NoopScrollableState,
+            );
+
+            assert!(matches!(probe.finish(), Outcome::None));
+        }
+    }
 }
 
 async fn fetch_remote_items_page(
@@ -271,6 +424,7 @@ mod view_helper {
 
     fn items_scrollable<'a>(items: &'a [Option<LibraryItem>]) -> Element<'a, super::Message> {
         scrollable(items_grid(items))
+            .id(iced::advanced::widget::Id::new(super::ITEMS_SCROLLABLE_ID))
             .width(Fill)
             .height(Fill)
             .on_scroll(|viewport| super::Message::Scrolled(viewport.relative_offset().y))
@@ -395,7 +549,7 @@ mod tests {
     }
 
     #[test]
-    fn update_items_loaded_stores_result_and_returns_no_action() {
+    fn update_items_loaded_stores_result_and_checks_the_viewport() {
         let mut browse = Browse {
             items: AsyncModel::Loading,
             pagination: Some(pagination(true, false)),
@@ -406,7 +560,7 @@ mod tests {
             Some(42),
         )])));
 
-        assert!(matches!(action, Action::None));
+        assert!(matches!(action, Action::Run(_)));
         assert!(matches!(browse.items, AsyncModel::Loaded(ref items) if items.len() == 1));
     }
 
@@ -530,9 +684,11 @@ mod tests {
             pagination: Some(pagination(true, true)),
         };
 
-        browse.update(Message::NextPageLoaded(Ok(vec![library_item(
+        let action = browse.update(Message::NextPageLoaded(Ok(vec![library_item(
             "Berserk", None,
         )])));
+
+        assert!(matches!(action, Action::Run(_)));
 
         let AsyncModel::Loaded(items) = &browse.items else {
             panic!("items should be loaded");
@@ -544,6 +700,68 @@ mod tests {
         assert_eq!(pagination.next_page, 3);
         assert!(!pagination.loading_next);
         assert!(!pagination.has_more);
+    }
+
+    #[test]
+    fn content_overflow_checked_true_does_not_request_a_page() {
+        let mut browse = Browse {
+            items: AsyncModel::Loaded(vec![Some(library_item("One Piece", None))]),
+            pagination: Some(pagination(true, false)),
+        };
+
+        let action = browse.update(Message::ContentOverflowChecked(true));
+
+        assert!(matches!(action, Action::None));
+        assert!(!browse.pagination.unwrap().loading_next);
+    }
+
+    #[test]
+    fn content_overflow_checked_false_requests_the_next_page_to_fill_the_viewport() {
+        let mut browse = Browse {
+            items: AsyncModel::Loaded(vec![Some(library_item("One Piece", None))]),
+            pagination: Some(pagination(true, false)),
+        };
+
+        let action = browse.update(Message::ContentOverflowChecked(false));
+
+        assert!(matches!(action, Action::Run(_)));
+        assert!(browse.pagination.unwrap().loading_next);
+    }
+
+    #[test]
+    fn content_overflow_checked_false_without_more_pages_does_nothing() {
+        let mut browse = Browse {
+            items: AsyncModel::Loaded(vec![Some(library_item("One Piece", None))]),
+            pagination: Some(pagination(false, false)),
+        };
+
+        let action = browse.update(Message::ContentOverflowChecked(false));
+
+        assert!(matches!(action, Action::None));
+    }
+
+    #[test]
+    fn content_overflow_checked_false_while_already_loading_does_nothing() {
+        let mut browse = Browse {
+            items: AsyncModel::Loaded(vec![Some(library_item("One Piece", None))]),
+            pagination: Some(pagination(true, true)),
+        };
+
+        let action = browse.update(Message::ContentOverflowChecked(false));
+
+        assert!(matches!(action, Action::None));
+    }
+
+    #[test]
+    fn content_overflow_checked_false_without_pagination_does_nothing() {
+        let mut browse = Browse {
+            items: AsyncModel::Loaded(Vec::new()),
+            pagination: None,
+        };
+
+        let action = browse.update(Message::ContentOverflowChecked(false));
+
+        assert!(matches!(action, Action::None));
     }
 
     #[test]
